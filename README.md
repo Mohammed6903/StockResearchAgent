@@ -125,7 +125,7 @@ run.
 | `src/stockresearch/glossary.py` | Static, authoritative metric definitions/formulas (no LLM). |
 | `src/stockresearch/evaluate.py` | Outcome scoring, calibration, training-data export. Deterministic. |
 | `src/stockresearch/portfolio.py` | Holdings review: value/P&L/weights + diversification checks. |
-| `src/stockresearch/store/db.py` | SQLite persistence: runs, analyses, macro signals, outcomes + queries. |
+| `src/stockresearch/store/` | Pluggable persistence: `db` (SQLite), `mongo` (MongoDB); `get_store()` selects the backend (Mongo if `MONGODB_URI` set & reachable, else SQLite). |
 | `src/stockresearch/report.py` | Markdown + `rich` terminal rendering. |
 | `src/stockresearch/cli.py` | Typer CLI: scan/analyze/macro/explain/score/calibration/export/watch/config/portfolio. |
 | `tests/` | Quant, store, agents, verify, citations, india, evaluate, portfolio — all no-network. |
@@ -364,6 +364,24 @@ the latest stored lean per holding, and flags concentration / heavy sector expos
 names — framed as beginner education, **not advice**.
 
 ---
+
+## Storage backend (SQLite or MongoDB)
+
+By default everything persists to a local **SQLite** file (`.cache/stockresearch.db`) — zero
+setup, always works offline. To centralize data (e.g. so a training pipeline or another
+machine can read it), point the tool at **MongoDB** via environment variables:
+
+```bash
+export MONGODB_URI="mongodb+srv://user:pass@cluster.mongodb.net/"   # Atlas SRV string
+export MONGODB_DB="stockresearch"                                   # optional, default shown
+```
+
+When `MONGODB_URI` is set and reachable, runs/outcomes are stored in Mongo (each daily report
+is one document — its natural shape, with nested snapshots/analyses); otherwise the tool
+**falls back to SQLite automatically** (and logs a warning), so a daily `scan` never fails
+just because Mongo is unreachable. The two backends are interchangeable behind
+`store.get_store()`. Keep the URI in the environment — never commit it. The day-level data
+cache (`.cache/data/`) is separate and always local.
 
 ## Development
 

@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from . import manage
 from .data.yfinance_adapter import get_closes, get_fundamentals
-from .store import db
+from .store import get_store
+
+db = get_store()
 
 # Beginner rule-of-thumb thresholds for the flags (not advice — just prompts to think).
 _CONCENTRATION_WARN = 0.25   # any single holding above 25% of the portfolio

@@ -42,7 +42,8 @@ def scan(
     """Run the full daily pipeline over the universe; save report + persist to DB."""
     from .agents.orchestrator import run_daily
     from .agents.universe import resolve_universe
-    from .store import db
+    from .store import get_store
+    db = get_store()
 
     universe = resolve_universe()
     if limit > 0:
@@ -144,7 +145,8 @@ def macro():
 @app.command()
 def report(date_str: str = typer.Argument(None, help="YYYY-MM-DD; default latest")):
     """Re-render a stored run from the database."""
-    from .store import db
+    from .store import get_store
+    db = get_store()
 
     rpt = db.load_report(Date.fromisoformat(date_str)) if date_str else db.latest_report()
     if not rpt:
@@ -156,7 +158,8 @@ def report(date_str: str = typer.Argument(None, help="YYYY-MM-DD; default latest
 @app.command()
 def runs():
     """List stored runs."""
-    from .store import db
+    from .store import get_store
+    db = get_store()
 
     table = Table(title="Runs")
     for col in ("Date", "Universe", "Created"):
@@ -218,7 +221,8 @@ def export(path: str = typer.Argument(..., help="Output .jsonl path for training
 @app.command()
 def track(ticker: str):
     """Show the historical track record of our calls for one ticker."""
-    from .store import db
+    from .store import get_store
+    db = get_store()
 
     hist = db.ticker_history(ticker)
     if not hist:

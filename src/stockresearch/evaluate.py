@@ -15,7 +15,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from .data.yfinance_adapter import price_on_or_after
-from .store import db
+from .store import get_store
+
+db = get_store()
 
 HORIZONS = (7, 30, 90)
 # Directional band: |return| <= this counts as "flat" (neutral correct); outside it is a move.
