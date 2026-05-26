@@ -1,4 +1,4 @@
-"""CLI entrypoint. Commands: scan, analyze, macro, report, track, runs."""
+"""CLI entrypoint. Commands: scan, analyze, macro, report, track, runs, watch, config."""
 
 from __future__ import annotations
 
@@ -9,10 +9,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import manage
 from . import report as report_mod
 from .gemini import configure_vertex_env
 
 app = typer.Typer(help="Agentic daily stock research (Vertex AI Gemini).", no_args_is_help=True)
+watch_app = typer.Typer(help="Manage tracked tickers (watchlist).", no_args_is_help=True)
+config_app = typer.Typer(help="View and update settings.", no_args_is_help=True)
+app.add_typer(watch_app, name="watch")
+app.add_typer(config_app, name="config")
 console = Console()
 
 
@@ -151,6 +156,97 @@ def track(ticker: str):
             f"{r['sharpe']:.2f}" if r["sharpe"] else "—",
         )
     console.print(table)
+
+
+# ---- watch: manage tracked tickers -----------------------------------------------------
+
+@watch_app.command("list")
+def watch_list():
+    """List the tracked tickers (watchlist)."""
+    tickers = manage.list_watchlist()
+    if not tickers:
+        console.print("[yellow]Watchlist is empty.[/yellow]")
+        return
+    console.print(f"[bold]{len(tickers)} tracked:[/bold] " + ", ".join(tickers))
+
+
+@watch_app.command("add")
+def watch_add(tickers: list[str] = typer.Argument(..., help="Tickers to add, e.g. AAPL NVDA")):
+    """Add one or more tickers to the watchlist."""
+    added, full = manage.add_watchlist(tickers)
+    if added:
+        console.print(f"[green]Added:[/green] {', '.join(added)}")
+    else:
+        console.print("[yellow]Nothing new to add.[/yellow]")
+    console.print(f"[dim]Watchlist ({len(full)}): {', '.join(full)}[/dim]")
+
+
+@watch_app.command("remove")
+def watch_remove(tickers: list[str] = typer.Argument(..., help="Tickers to remove")):
+    """Remove one or more tickers from the watchlist."""
+    removed, full = manage.remove_watchlist(tickers)
+    if removed:
+        console.print(f"[red]Removed:[/red] {', '.join(removed)}")
+    else:
+        console.print("[yellow]None of those were in the watchlist.[/yellow]")
+    console.print(f"[dim]Watchlist ({len(full)}): {', '.join(full) or '(empty)'}[/dim]")
+
+
+@watch_app.command("clear")
+def watch_clear(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
+    """Remove all tickers from the watchlist."""
+    if not yes:
+        typer.confirm("Clear the entire watchlist?", abort=True)
+    manage.clear_watchlist()
+    console.print("[green]Watchlist cleared.[/green]")
+
+
+# ---- config: view and update settings --------------------------------------------------
+
+@config_app.command("show")
+def config_show():
+    """Show all settings; editable keys are marked."""
+    settings = manage.show_settings()
+    table = Table(title="Settings")
+    for col in ("Key", "Value", "Editable"):
+        table.add_column(col)
+
+    def walk(prefix: str, node):
+        for k, v in node.items():
+            key = f"{prefix}.{k}" if prefix else k
+            if hasattr(v, "items"):
+                walk(key, v)
+            else:
+                editable = "[green]yes[/green]" if key in manage.SETTABLE else ""
+                table.add_row(key, str(v), editable)
+
+    walk("", settings)
+    console.print(table)
+
+
+@config_app.command("get")
+def config_get(key: str = typer.Argument(..., help="Dotted key, e.g. universe.benchmark")):
+    """Print the value of one setting."""
+    try:
+        console.print(f"{key} = {manage.get_setting(key)}")
+    except KeyError:
+        console.print(f"[red]No such setting: {key}[/red]")
+        raise typer.Exit(1) from None
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(..., help="Dotted key (must be an editable key)"),
+    value: str = typer.Argument(..., help="New value"),
+):
+    """Update a setting (validated; only daily-use keys are editable)."""
+    try:
+        new = manage.set_setting(key, value)
+    except (ValueError, KeyError) as e:
+        console.print(f"[red]{e}[/red]")
+        console.print("[dim]Editable keys:[/dim] " + ", ".join(sorted(manage.SETTABLE)))
+        raise typer.Exit(1) from None
+    console.print(f"[green]Set[/green] {key} = {new}")
 
 
 if __name__ == "__main__":

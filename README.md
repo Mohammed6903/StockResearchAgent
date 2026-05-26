@@ -248,6 +248,35 @@ stockresearch report 2026-05-26   # specific date
 stockresearch runs
 ```
 
+### `watch` — manage tracked tickers
+
+Edit the watchlist without touching YAML:
+
+```bash
+stockresearch watch list
+stockresearch watch add AMD AVGO     # add one or more (deduped, upper-cased)
+stockresearch watch remove TSLA
+stockresearch watch clear            # prompts; -y to skip
+```
+
+### `config` — view and update settings
+
+All settings are viewable; only daily-use keys are editable via `set` (changes are
+validated against the schema and your YAML comments are preserved). Editable keys:
+`universe.index`, `universe.benchmark`, `universe.max_tickers`, `vertex.model`,
+`vertex.fast_model`.
+
+```bash
+stockresearch config show                       # all settings; editable ones marked
+stockresearch config get universe.benchmark
+stockresearch config set universe.benchmark QQQ
+stockresearch config set universe.index NONE    # watchlist-only scans
+stockresearch config set vertex.model gemini-2.5-flash
+```
+
+Other settings (quant params, runtime) stay YAML-only to avoid foot-guns — edit
+`config/settings.yaml` directly for those.
+
 ### `track TICKER` — historical track record
 
 Every past call for a ticker (lean, score, price, beta, alpha, Sharpe) across runs —
