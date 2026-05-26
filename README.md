@@ -48,6 +48,12 @@ URLs. To keep these auditable rather than taking the model's word:
 Source URLs are Vertex grounding redirect links (they bounce to the publisher); the link
 *title* carries the publisher domain (e.g. `federalreserve.gov`, `reuters.com`).
 
+**Recency guards.** Grounded search sometimes surfaces old articles and labels them
+"recent." To prevent stale narratives, every news/macro query is anchored to the current
+date and asked to ignore anything older than ~1 month, and the analyst is told the
+fundamentals are live, to disregard prior-year events, and to prefer the live numbers when
+recent news contradicts them.
+
 **Cross-source agreement.** A macro signal is only marked *corroborated* when it is backed
 by ≥ 2 **distinct publisher domains** (deduped on the title-domain, since two links from the
 same outlet are not independent confirmation). Uncorroborated signals keep their evidence

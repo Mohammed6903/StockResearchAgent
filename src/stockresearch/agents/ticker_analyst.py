@@ -11,6 +11,7 @@ from the model, then merged into the final TickerAnalysis.
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pandas as pd
 
@@ -78,25 +79,43 @@ def _facts_block(snap: TickerSnapshot, macro_signals: list[MacroSignal]) -> str:
 
 
 def _analyze(facts: str) -> AnalystVerdict:
+    today = date.today().isoformat()
     prompt = (
-        "You are an equity research analyst. Based ONLY on the facts below, produce an "
-        "analytical verdict. Weigh valuation (P/E, P/B, PEG), profitability/margins, "
-        "leverage (debt/equity, current ratio), growth, risk-adjusted performance "
-        "(Sharpe, beta, alpha, volatility, drawdown), recent news and relevant macro. "
-        "Cite specific numbers in your reasoning. Be balanced: list real pros AND cons. "
-        "If key data is missing, lower your confidence. This is research, not advice.\n\n"
-        f"{facts}"
+        f"Today's date is {today}. You are an equity research analyst. Produce an analytical "
+        "verdict using ONLY the facts below.\n"
+        "CRITICAL RULES ON RECENCY:\n"
+        "- The FUNDAMENTALS and QUANT METRICS are LIVE as of today; treat them as current.\n"
+        "- RECENT NEWS items may be mis-dated by the search. Treat as current ONLY items "
+        "clearly dated within the last ~1-2 months. IGNORE anything older (e.g. a prior-year "
+        "'Q4 FY24' result) and NEVER describe a prior-year event as recent.\n"
+        "- Do NOT use any prior/training knowledge of specific past events, earnings quarters, "
+        "capital raises, litigation, or figures that are not present below.\n"
+        "- Do NOT attribute a live fundamental to a named fiscal quarter unless that period is "
+        "explicitly and recently dated in the news.\n"
+        "- If RECENT NEWS conflicts with the live fundamentals (e.g. news says profit fell but "
+        "earnings_growth is positive), PREFER the live fundamentals and note the conflict.\n\n"
+        "Weigh valuation (P/E, P/B, PEG), profitability/margins, leverage (debt/equity, current "
+        "ratio), growth, risk-adjusted performance (Sharpe, beta, alpha, volatility, drawdown), "
+        "and genuinely recent news/macro. Cite specific numbers. Be balanced: real pros AND "
+        "cons. If key data is missing or news isn't recent, lower confidence. Research, not "
+        f"advice.\n\n{facts}"
     )
     return reason(prompt, AnalystVerdict, temperature=0.3)
 
 
 def _reflect(facts: str, verdict: AnalystVerdict) -> AnalystVerdict:
+    today = date.today().isoformat()
     prompt = (
-        "You are a skeptical reviewer checking another analyst's verdict for rigor. "
-        "Verify every claim is supported by the facts. Flag: numbers contradicted by the "
-        "data, pros/cons not grounded in facts, lean/score inconsistent with the evidence, "
-        "or overconfidence given data warnings. Return a corrected verdict (revised). "
-        "If the verdict is already sound, set needs_revision=false and echo it in revised.\n\n"
+        f"Today's date is {today}. You are a skeptical reviewer checking another analyst's "
+        "verdict for rigor. Verify every claim is supported by the facts. Flag and REMOVE:\n"
+        "- any claim citing a specific past fiscal quarter, dated event, or figure that is "
+        "NOT present in the live fundamentals or in news dated within the last ~1-2 months "
+        "(these are stale model recollections or mis-dated search hits);\n"
+        "- any prior-year event described as 'recent';\n"
+        "- numbers contradicted by the live data, pros/cons not grounded in the facts, "
+        "lean/score inconsistent with the evidence, or overconfidence given data warnings.\n"
+        "Return a corrected verdict (revised). If already sound, set needs_revision=false and "
+        "echo it in revised.\n\n"
         f"FACTS:\n{facts}\n\nVERDICT UNDER REVIEW:\n{verdict.model_dump_json()}\n"
     )
     critique = reason(prompt, CritiqueResult, temperature=0.1)
