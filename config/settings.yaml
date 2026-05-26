@@ -1,0 +1,26 @@
+# Vertex AI / Gemini
+vertex:
+  # Leave as placeholder to auto-resolve from $GOOGLE_CLOUD_PROJECT or your ADC quota
+  # project; or set your project id explicitly here.
+  project: your-gcp-project-id
+  location: us-central1
+  model: gemini-2.5-pro          # reasoning model for analysis/synthesis
+  fast_model: gemini-2.5-flash   # cheaper model for macro scan / news triage
+
+# Universe
+universe:
+  index: SP500          # SP500 | NONE  (index members unioned with watchlist)
+  benchmark: SPY        # benchmark used for beta/alpha
+  max_tickers: 50       # safety cap on a full scan
+
+# Quant
+quant:
+  lookback_days: 365    # price history window for beta/alpha/sharpe/vol
+  risk_free_rate: 0.045 # annual, for Sharpe
+
+# Runtime
+runtime:
+  concurrency: 4        # parallel ticker workers
+  cache_ttl_hours: 12   # data cache lifetime
+  reports_dir: reports
+  db_path: .cache/stockresearch.db

@@ -1,0 +1,9 @@
+# Your core watchlist. These are always analyzed, unioned with the index members.
+tickers:
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA
