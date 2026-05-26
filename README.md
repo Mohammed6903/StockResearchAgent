@@ -177,9 +177,10 @@ vertex:
   model: gemini-2.5-pro          # reasoning/synthesis
   fast_model: gemini-2.5-flash   # macro scan / news triage
 universe:
-  index: SP500                   # SP500 | NONE
-  benchmark: SPY                 # used for beta/alpha
+  index: SP500                   # SP500 | NIFTY50 | NONE
+  benchmark: SPY                 # used for beta/alpha (e.g. ^NSEI, ^BSESN for India)
   max_tickers: 50                # cost safety cap
+  region: global                 # macro/news focus: global | India | US
 quant:
   lookback_days: 365
   risk_free_rate: 0.045
@@ -276,6 +277,26 @@ stockresearch config set vertex.model gemini-2.5-flash
 
 Other settings (quant params, runtime) stay YAML-only to avoid foot-guns — edit
 `config/settings.yaml` directly for those.
+
+### Markets other than the US (e.g. India / BSE & NSE)
+
+The tool is market-agnostic via yfinance ticker suffixes and a configurable index/benchmark:
+
+- **Tickers:** use the yfinance suffix — `.NS` for NSE, `.BO` for BSE (e.g. `RELIANCE.NS`,
+  `INFY.BO`). Add them with `stockresearch watch add RELIANCE.NS TCS.NS`.
+- **Index:** `stockresearch config set universe.index NIFTY50` (NIFTY 50 constituents,
+  fetched from Wikipedia) — or `NONE` for watchlist-only.
+- **Benchmark:** `stockresearch config set universe.benchmark '^NSEI'` (NIFTY 50) or
+  `'^BSESN'` (SENSEX) so beta/alpha are measured against the right market.
+- **Macro focus:** `stockresearch config set universe.region India` biases the macro and
+  news scans toward India-specific drivers (RBI, SEBI, Union Budget, monsoon, FII/FPI flows,
+  USD/INR) **plus** global events that move Indian markets (US Fed, crude oil).
+- **Risk-free rate:** set `quant.risk_free_rate` in `settings.yaml` to your local level
+  (e.g. `0.065` for the Indian 10Y G-Sec) so Sharpe is meaningful.
+
+Fundamentals, prices, and ratios come back in the local currency (e.g. ₹). Note: the
+optional Alpha Vantage cross-check uses `.BSE` symbols rather than yfinance's `.NS`/`.BO`,
+so verification coverage for Indian tickers is partial.
 
 ### `track TICKER` — historical track record
 

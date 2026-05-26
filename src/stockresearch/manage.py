@@ -22,12 +22,15 @@ _yaml.indent(mapping=2, sequence=2, offset=0)
 
 # key -> (human description, coercion function). Only these may be changed via `config set`.
 SETTABLE: dict[str, tuple[str, Any]] = {
-    "universe.index": ("stock index to union with the watchlist (SP500 | NONE)", "_index"),
-    "universe.benchmark": ("benchmark ticker for beta/alpha (e.g. SPY)", "_upper"),
+    "universe.index": ("index to union with watchlist (SP500 | NIFTY50 | NONE)", "_index"),
+    "universe.benchmark": ("benchmark ticker for beta/alpha (e.g. SPY, ^NSEI)", "_upper"),
     "universe.max_tickers": ("max tickers scanned per run", "_int"),
+    "universe.region": ("market focus for macro/news (e.g. India, US, global)", "_str"),
     "vertex.model": ("Gemini model for reasoning/synthesis", "_str"),
     "vertex.fast_model": ("Gemini model for macro/news triage", "_str"),
 }
+
+_VALID_INDEXES = {"SP500", "NIFTY50", "NONE"}
 
 
 def _settings_path() -> Path:
@@ -97,8 +100,8 @@ def _coerce(key: str, value: str):
         return value.strip().upper()
     if kind == "_index":
         v = value.strip().upper()
-        if v not in {"SP500", "NONE"}:
-            raise ValueError("universe.index must be SP500 or NONE")
+        if v not in _VALID_INDEXES:
+            raise ValueError(f"universe.index must be one of {', '.join(sorted(_VALID_INDEXES))}")
         return v
     return value
 

@@ -82,7 +82,7 @@ def test_config_set_rejects_non_allowlisted_key(cfg):
 
 
 def test_config_set_validates_index_value(cfg):
-    with pytest.raises(ValueError, match="SP500 or NONE"):
+    with pytest.raises(ValueError, match="must be one of"):
         manage.set_setting("universe.index", "DOWJONES")
 
 

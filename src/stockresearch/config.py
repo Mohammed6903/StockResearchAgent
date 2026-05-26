@@ -55,6 +55,7 @@ class UniverseConfig(BaseModel):
     index: str = "SP500"
     benchmark: str = "SPY"
     max_tickers: int = 50
+    region: str = "global"  # focuses macro/news; e.g. "India", "US", "global"
 
 
 class QuantConfig(BaseModel):

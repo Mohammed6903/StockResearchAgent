@@ -9,14 +9,15 @@ vertex:
 
 # Universe
 universe:
-  index: SP500          # SP500 | NONE  (index members unioned with watchlist)
-  benchmark: SPY        # benchmark used for beta/alpha
+  index: NIFTY50        # SP500 | NIFTY50 | NONE (index members unioned with watchlist)
+  benchmark: ^NSEI      # benchmark used for beta/alpha (^NSEI = NIFTY 50, ^BSESN = SENSEX)
   max_tickers: 50       # safety cap on a full scan
+  region: India         # focuses macro/news (India | US | global)
 
 # Quant
 quant:
   lookback_days: 365    # price history window for beta/alpha/sharpe/vol
-  risk_free_rate: 0.045 # annual, for Sharpe
+  risk_free_rate: 0.065 # annual, for Sharpe (India 10Y G-Sec ~6.5%)
 
 # Runtime
 runtime:
