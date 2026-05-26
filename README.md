@@ -121,7 +121,7 @@ run.
 | `src/stockresearch/gemini.py` | Vertex env setup + cached `google-genai` client. |
 | `src/stockresearch/data/` | Data adapters: `yfinance_adapter`, `news_adapter` (grounding), `index_membership` (S&P 500), `verify` (2nd-source fundamentals cross-check), `cache` (day-level disk cache). |
 | `src/stockresearch/quant/metrics.py` | Deterministic beta/alpha/Sharpe/volatility/drawdown/returns. No LLM, no network. |
-| `src/stockresearch/agents/` | `universe`, `macro_agent`, `ticker_analyst` (+reflection), `explainer` (beginner teaching), `orchestrator`, `reason` (structured-output helper), `schemas`. |
+| `src/stockresearch/agents/` | `universe`, `macro_agent`, `ticker_analyst` (+reflection), `explainer` (beginner teaching), `advisor` (capital-sized buy/sell/hold), `orchestrator`, `reason`, `schemas`. |
 | `src/stockresearch/glossary.py` | Static, authoritative metric definitions/formulas (no LLM). |
 | `src/stockresearch/evaluate.py` | Outcome scoring, calibration, training-data export. Deterministic. |
 | `src/stockresearch/portfolio.py` | Holdings review: value/P&L/weights + diversification checks. |
@@ -286,8 +286,8 @@ stockresearch watch clear            # prompts; -y to skip
 
 All settings are viewable; only daily-use keys are editable via `set` (changes are
 validated against the schema and your YAML comments are preserved). Editable keys:
-`universe.index`, `universe.benchmark`, `universe.max_tickers`, `vertex.model`,
-`vertex.fast_model`.
+`universe.index`, `universe.benchmark`, `universe.max_tickers`, `universe.region`,
+`vertex.model`, `vertex.fast_model`, `account.capital`, `account.max_position_pct`.
 
 ```bash
 stockresearch config show                       # all settings; editable ones marked
@@ -328,6 +328,37 @@ the basis for later scoring prediction accuracy against realized moves.
 ```bash
 stockresearch track GOOGL
 ```
+
+### `advise TICKER` — actionable buy/sell/hold (capital-sized)
+
+Turns the analysis into a concrete **BUY / SELL / HOLD** call, **sized to your capital** and
+capped per position, and **logs it** so its win-rate can be measured later. Requires capital:
+
+```bash
+stockresearch config set account.capital 100000        # your investable capital
+stockresearch config set account.max_position_pct 0.1  # cap any one position at 10%
+stockresearch advise RELIANCE.NS
+stockresearch advise TCS.NS --no-save                  # don't log this one
+```
+
+The LLM picks the direction and a target position size; the system does the share/amount math
+deterministically and enforces the caps — it won't suggest exceeding `max_position_pct`, can't
+SELL what you don't hold, and abstains (HOLD) if price data is missing. It's portfolio-aware:
+BUY is sized against capital relative to what you already own. Sized suggestions for
+research/tracking — **not financial advice**.
+
+### `recommendations` / `winrate` — the call log and its scorecard
+
+```bash
+stockresearch recommendations            # every logged buy/sell/hold call
+stockresearch recommendations RELIANCE.NS
+stockresearch score                      # grades matured analysis AND recommendation calls
+stockresearch winrate                    # win-rate of buy/sell calls, by action & horizon
+```
+
+A BUY "wins" if the price rose over the horizon (7/30/90d); a SELL "wins" if it fell (you
+avoided loss). `winrate` reports the overall hit-rate plus breakdowns — your scorecard for how
+the agentic system is actually doing over time.
 
 ### `explain [TERM]` — learn the metrics
 

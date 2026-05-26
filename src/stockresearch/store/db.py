@@ -9,7 +9,7 @@ from datetime import date as Date
 from pathlib import Path
 
 from ..config import load_settings
-from ..models import DailyReport
+from ..models import DailyReport, Recommendation
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -54,7 +54,35 @@ CREATE TABLE IF NOT EXISTS outcomes (
     correct     INTEGER,
     PRIMARY KEY (run_date, ticker, horizon_days)
 );
+CREATE TABLE IF NOT EXISTS recommendations (
+    run_date    TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    action      TEXT,
+    shares      REAL,
+    amount      REAL,
+    target_pct  REAL,
+    price_at_rec REAL,
+    confidence  REAL,
+    lean        TEXT,
+    score       REAL,
+    rationale   TEXT,
+    notes       TEXT,
+    PRIMARY KEY (run_date, ticker)
+);
+CREATE TABLE IF NOT EXISTS rec_outcomes (
+    run_date    TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    action      TEXT,
+    confidence  REAL,
+    price_then  REAL,
+    price_later REAL,
+    forward_return REAL,
+    win         INTEGER,
+    PRIMARY KEY (run_date, ticker, horizon_days)
+);
 CREATE INDEX IF NOT EXISTS idx_ta_ticker ON ticker_analysis(ticker);
+CREATE INDEX IF NOT EXISTS idx_rec_ticker ON recommendations(ticker);
 """
 
 
@@ -171,6 +199,54 @@ def upsert_outcome(
 def outcomes_rows() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM outcomes WHERE forward_return IS NOT NULL").fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_recommendation(rec: Recommendation) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO recommendations (run_date, ticker, action, shares, amount, "
+            "target_pct, price_at_rec, confidence, lean, score, rationale, notes) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                rec.run_date.isoformat(), rec.ticker, rec.action.value, rec.shares, rec.amount,
+                rec.target_pct, rec.price_at_rec, rec.confidence, rec.lean.value, rec.score,
+                rec.rationale, json.dumps(rec.notes),
+            ),
+        )
+
+
+def recommendations_rows(ticker: str | None = None) -> list[dict]:
+    sql = "SELECT * FROM recommendations"
+    params: tuple = ()
+    if ticker:
+        sql += " WHERE ticker = ?"
+        params = (ticker.upper(),)
+    sql += " ORDER BY run_date DESC, ticker"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_rec_outcome(
+    run_date: str, ticker: str, horizon_days: int, action: str, confidence: float | None,
+    price_then: float | None, price_later: float | None, forward_return: float | None,
+    win: bool | None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO rec_outcomes (run_date, ticker, horizon_days, action, "
+            "confidence, price_then, price_later, forward_return, win) VALUES (?,?,?,?,?,?,?,?,?)",
+            (run_date, ticker, horizon_days, action, confidence, price_then, price_later,
+             forward_return, None if win is None else int(win)),
+        )
+
+
+def rec_outcomes_rows() -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM rec_outcomes WHERE forward_return IS NOT NULL"
+        ).fetchall()
     return [dict(r) for r in rows]
 
 

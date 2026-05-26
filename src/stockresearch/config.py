@@ -70,11 +70,17 @@ class RuntimeConfig(BaseModel):
     db_path: str = ".cache/stockresearch.db"
 
 
+class AccountConfig(BaseModel):
+    capital: float = 0.0          # total investable capital; 0 = advice disabled
+    max_position_pct: float = 0.10  # cap on any single position as a fraction of capital
+
+
 class Settings(BaseModel):
     vertex: VertexConfig
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     quant: QuantConfig = Field(default_factory=QuantConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    account: AccountConfig = Field(default_factory=AccountConfig)
 
     @property
     def reports_path(self) -> Path:

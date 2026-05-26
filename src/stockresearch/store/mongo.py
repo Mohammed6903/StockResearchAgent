@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date as Date
 from datetime import datetime, timezone
 
-from ..models import DailyReport
+from ..models import DailyReport, Recommendation
 
 
 class MongoStore:
@@ -27,8 +27,14 @@ class MongoStore:
         self.client = client
         self.reports = client[dbname]["reports"]
         self.outcomes = client[dbname]["outcomes"]
+        self.recommendations = client[dbname]["recommendations"]
+        self.rec_outcomes = client[dbname]["rec_outcomes"]
         self.reports.create_index("run_date", unique=True)
         self.outcomes.create_index(
+            [("run_date", 1), ("ticker", 1), ("horizon_days", 1)], unique=True
+        )
+        self.recommendations.create_index([("run_date", 1), ("ticker", 1)], unique=True)
+        self.rec_outcomes.create_index(
             [("run_date", 1), ("ticker", 1), ("horizon_days", 1)], unique=True
         )
 
@@ -119,4 +125,37 @@ class MongoStore:
         return [
             {k: v for k, v in d.items() if k != "_id"}
             for d in self.outcomes.find({"forward_return": {"$ne": None}})
+        ]
+
+    # ---- recommendations ---------------------------------------------------------------
+    def save_recommendation(self, rec: Recommendation) -> None:
+        doc = rec.model_dump(mode="json")
+        key = {"run_date": doc["run_date"], "ticker": doc["ticker"]}
+        self.recommendations.replace_one(key, {**key, **doc}, upsert=True)
+
+    def recommendations_rows(self, ticker: str | None = None) -> list[dict]:
+        query = {"ticker": ticker.upper()} if ticker else {}
+        return [
+            {k: v for k, v in d.items() if k != "_id"}
+            for d in self.recommendations.find(query, sort=[("run_date", -1), ("ticker", 1)])
+        ]
+
+    def save_rec_outcome(
+        self, run_date: str, ticker: str, horizon_days: int, action: str,
+        confidence: float | None, price_then: float | None, price_later: float | None,
+        forward_return: float | None, win: bool | None,
+    ) -> None:
+        key = {"run_date": run_date, "ticker": ticker, "horizon_days": horizon_days}
+        self.rec_outcomes.replace_one(
+            key,
+            {**key, "action": action, "confidence": confidence, "price_then": price_then,
+             "price_later": price_later, "forward_return": forward_return,
+             "win": None if win is None else int(win)},
+            upsert=True,
+        )
+
+    def rec_outcomes_rows(self) -> list[dict]:
+        return [
+            {k: v for k, v in d.items() if k != "_id"}
+            for d in self.rec_outcomes.find({"forward_return": {"$ne": None}})
         ]

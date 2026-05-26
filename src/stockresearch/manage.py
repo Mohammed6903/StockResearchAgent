@@ -28,6 +28,8 @@ SETTABLE: dict[str, tuple[str, Any]] = {
     "universe.region": ("market focus for macro/news (e.g. India, US, global)", "_str"),
     "vertex.model": ("Gemini model for reasoning/synthesis", "_str"),
     "vertex.fast_model": ("Gemini model for macro/news triage", "_str"),
+    "account.capital": ("total investable capital for buy/sell advice sizing", "_float"),
+    "account.max_position_pct": ("max single position as a fraction of capital", "_float"),
 }
 
 _VALID_INDEXES = {"SP500", "NIFTY50", "NONE"}
@@ -143,6 +145,8 @@ def _coerce(key: str, value: str):
     kind = SETTABLE[key][1]
     if kind == "_int":
         return int(value)
+    if kind == "_float":
+        return float(value)
     if kind == "_upper":
         return value.strip().upper()
     if kind == "_index":

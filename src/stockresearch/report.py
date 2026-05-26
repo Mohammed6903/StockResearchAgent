@@ -8,7 +8,11 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_settings
-from .models import DailyReport, Explanation, Lean, NewsItem, TickerAnalysis  # noqa: F401
+from .models import (  # noqa: F401
+    Action, DailyReport, Explanation, Lean, NewsItem, Recommendation, TickerAnalysis,
+)
+
+_ACTION_COLOR = {Action.BUY: "green", Action.HOLD: "yellow", Action.SELL: "red"}
 
 _LEAN_COLOR = {Lean.BULLISH: "green", Lean.NEUTRAL: "yellow", Lean.BEARISH: "red"}
 
@@ -145,6 +149,24 @@ def print_single(a: TickerAnalysis, console: Console | None = None) -> None:
             console.print(f"  [dim]- {src.title or src.source}[/dim] {link}")
     if a.data_warnings:
         console.print(f"\n[yellow]Data warnings: {', '.join(a.data_warnings)}[/yellow]")
+
+
+def print_recommendation(rec: Recommendation, console: Console | None = None) -> None:
+    console = console or Console()
+    color = _ACTION_COLOR.get(rec.action, "white")
+    console.rule(f"[bold]Recommendation — {rec.ticker}")
+    console.print(f"Action: [{color}]{rec.action.value.upper()}[/{color}]  "
+                  f"Confidence: {rec.confidence:.0%}")
+    if rec.action != Action.HOLD and rec.shares:
+        console.print(
+            f"Size: {rec.shares:g} shares  (~{rec.amount:,.0f} @ {rec.price_at_rec:,.2f})  "
+            f"target weight {rec.target_pct:.0%} of capital"
+        )
+    if rec.rationale:
+        console.print(f"\n{rec.rationale}")
+    for n in rec.notes:
+        console.print(f"[yellow]Note:[/yellow] {n}")
+    console.print("\n[dim]Sized suggestion for research/tracking — not financial advice.[/dim]")
 
 
 def print_explanation(exp: Explanation, console: Console | None = None) -> None:

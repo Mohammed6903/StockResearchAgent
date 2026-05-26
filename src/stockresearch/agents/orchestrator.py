@@ -9,7 +9,8 @@ from datetime import date as Date
 
 from ..config import load_settings
 from ..data.yfinance_adapter import get_closes
-from ..models import DailyReport, Explanation, TickerAnalysis, TickerSnapshot
+from ..models import DailyReport, Explanation, Recommendation, TickerAnalysis, TickerSnapshot
+from .advisor import advise
 from .explainer import explain_analysis
 from .macro_agent import run_macro_scan
 from .ticker_analyst import analyze_from_snapshot, build_snapshot
@@ -91,3 +92,31 @@ def run_single(
         persist_analyses(Date.today(), [analysis], [snap])
     explanation = explain_analysis(snap, analysis) if explain else None
     return analysis, explanation
+
+
+def run_advice(
+    ticker: str, *, reflect: bool = True, verify: bool = True, save: bool = True,
+) -> tuple[TickerAnalysis, Recommendation]:
+    from .. import manage
+
+    settings = load_settings()
+    benchmark_closes = get_closes(settings.universe.benchmark, settings.quant.lookback_days)
+    _, macro_signals = run_macro_scan()
+    snap = build_snapshot(ticker.upper(), benchmark_closes, verify=verify)
+    analysis = analyze_from_snapshot(snap, macro_signals, reflect=reflect)
+
+    held_qty = next(
+        (h["qty"] for h in manage.list_holdings() if h["ticker"] == snap.ticker), 0.0
+    )
+    rec = advise(
+        snap, analysis,
+        capital=settings.account.capital,
+        max_position_pct=settings.account.max_position_pct,
+        held_qty=held_qty,
+    )
+    if save:
+        from ..store import get_store, persist_analyses
+
+        persist_analyses(Date.today(), [analysis], [snap])
+        get_store().save_recommendation(rec)
+    return analysis, rec

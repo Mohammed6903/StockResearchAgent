@@ -19,6 +19,11 @@ quant:
   lookback_days: 365    # price history window for beta/alpha/sharpe/vol
   risk_free_rate: 0.065 # annual, for Sharpe (India 10Y G-Sec ~6.5%)
 
+# Account (for buy/sell advice sizing). capital 0 = advice disabled until you set it.
+account:
+  capital: 0.0          # total investable capital, in your currency
+  max_position_pct: 0.1 # cap on any single position (fraction of capital)
+
 # Runtime
 runtime:
   concurrency: 4        # parallel ticker workers

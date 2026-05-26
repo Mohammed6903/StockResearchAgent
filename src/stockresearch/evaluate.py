@@ -58,6 +58,61 @@ def score_matured(today: date | None = None) -> int:
     return scored
 
 
+def _rec_win(action: str, fwd: float) -> bool | None:
+    """BUY wins if price rose, SELL wins if it fell. HOLD isn't a trade (None)."""
+    if action == "buy":
+        return fwd > _FLAT_BAND
+    if action == "sell":
+        return fwd < -_FLAT_BAND
+    return None
+
+
+def score_recommendations(today: date | None = None) -> int:
+    """Compute and persist directional outcomes for matured recommendations."""
+    today = today or date.today()
+    scored = 0
+    for rec in db.recommendations_rows():
+        rd = date.fromisoformat(rec["run_date"])
+        price_then = rec.get("price_at_rec")
+        if not price_then:
+            continue
+        for h in HORIZONS:
+            target = rd + timedelta(days=h)
+            if target > today:
+                continue
+            price_later = price_on_or_after(rec["ticker"], target.isoformat())
+            if not price_later:
+                continue
+            fwd = price_later / price_then - 1.0
+            db.save_rec_outcome(
+                rec["run_date"], rec["ticker"], h, rec["action"], rec.get("confidence"),
+                price_then, price_later, fwd, _rec_win(rec["action"], fwd),
+            )
+            scored += 1
+    return scored
+
+
+def winrate() -> dict:
+    """Win-rate over matured BUY/SELL recommendations, with breakdowns."""
+    rows = [r for r in db.rec_outcomes_rows() if r.get("win") is not None]
+    if not rows:
+        return {}
+    by_action: dict[str, dict] = {}
+    by_horizon: dict[int, dict] = {}
+    for r in rows:
+        a = by_action.setdefault(r["action"], {"n": 0, "wins": 0, "ret_sum": 0.0})
+        a["n"] += 1
+        a["wins"] += int(r["win"] or 0)
+        a["ret_sum"] += r["forward_return"] or 0.0
+        h = by_horizon.setdefault(r["horizon_days"], {"n": 0, "wins": 0})
+        h["n"] += 1
+        h["wins"] += int(r["win"] or 0)
+    total = len(rows)
+    wins = sum(int(r["win"] or 0) for r in rows)
+    return {"total": total, "win_rate": wins / total,
+            "by_action": by_action, "by_horizon": dict(sorted(by_horizon.items()))}
+
+
 def calibration() -> dict:
     """Aggregate accuracy by confidence bucket and by lean. Empty dict if no matured data."""
     rows = db.outcomes_rows()

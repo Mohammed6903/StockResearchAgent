@@ -97,6 +97,84 @@ def analyze(
 
 
 @app.command()
+def advise(
+    ticker: str,
+    no_reflect: bool = typer.Option(False),
+    verify: bool = typer.Option(True, "--verify/--no-verify"),
+    no_save: bool = typer.Option(False, "--no-save", help="Don't record this recommendation."),
+):
+    """Actionable, capital-sized BUY/SELL/HOLD call for a ticker (logged for win-rate)."""
+    from .agents.orchestrator import run_advice
+    from .config import load_settings
+
+    if load_settings().account.capital <= 0:
+        console.print("[red]No capital configured.[/red] Set it first, e.g.:")
+        console.print("  stockresearch config set account.capital 100000")
+        raise typer.Exit(1)
+
+    with console.status(f"Advising on {ticker.upper()}…"):
+        analysis, rec = run_advice(
+            ticker, reflect=not no_reflect, verify=verify, save=not no_save
+        )
+    report_mod.print_single(analysis, console)
+    report_mod.print_recommendation(rec, console)
+    if not no_save:
+        console.print(f"[dim]Recorded recommendation for {Date.today().isoformat()}.[/dim]")
+
+
+@app.command()
+def recommendations(ticker: str = typer.Argument(None, help="Filter to one ticker")):
+    """List logged buy/sell/hold recommendations."""
+    from .store import get_store
+
+    rows = get_store().recommendations_rows(ticker)
+    if not rows:
+        console.print("[yellow]No recommendations logged yet. Use `advise`.[/yellow]")
+        return
+    table = Table(title="Recommendations")
+    for col in ("Date", "Ticker", "Action", "Shares", "Amount", "Target%", "Conf", "Price"):
+        table.add_column(col)
+    for r in rows:
+        act = (r.get("action") or "").upper()
+        color = {"BUY": "green", "SELL": "red"}.get(act, "yellow")
+        table.add_row(
+            r["run_date"], r["ticker"], f"[{color}]{act}[/{color}]",
+            f"{(r.get('shares') or 0):g}", f"{(r.get('amount') or 0):,.0f}",
+            f"{(r.get('target_pct') or 0) * 100:.0f}%", f"{(r.get('confidence') or 0):.0%}",
+            f"{r.get('price_at_rec'):,.2f}" if r.get("price_at_rec") else "—",
+        )
+    console.print(table)
+
+
+@app.command()
+def winrate():
+    """Win-rate of logged buy/sell calls (run `score` first to grade matured ones)."""
+    from . import evaluate
+
+    w = evaluate.winrate()
+    if not w:
+        console.print("[yellow]No matured recommendations scored yet. Run `score`.[/yellow]")
+        raise typer.Exit()
+    console.print(f"[bold]Win rate:[/bold] {w['win_rate']:.0%} over {w['total']} "
+                  "matured buy/sell calls\n")
+    t1 = Table(title="By action")
+    for col in ("Action", "N", "Win rate", "Avg fwd return"):
+        t1.add_column(col)
+    for action, d in w["by_action"].items():
+        wr = f"{d['wins'] / d['n']:.0%}" if d["n"] else "—"
+        avg = f"{d['ret_sum'] / d['n'] * 100:.1f}%" if d["n"] else "—"
+        t1.add_row(action, str(d["n"]), wr, avg)
+    console.print(t1)
+    t2 = Table(title="By horizon")
+    for col in ("Horizon", "N", "Win rate"):
+        t2.add_column(col)
+    for h, d in w["by_horizon"].items():
+        wr = f"{d['wins'] / d['n']:.0%}" if d["n"] else "—"
+        t2.add_row(f"{h}d", str(d["n"]), wr)
+    console.print(t2)
+
+
+@app.command()
 def explain(term: str = typer.Argument(None, help="Metric to explain, e.g. 'pe', 'sharpe'")):
     """Explain a financial metric in plain language (no arg = list all terms)."""
     from . import glossary
@@ -184,8 +262,9 @@ def score():
 
     with console.status("Scoring matured calls…"):
         n = evaluate.score_matured()
-    console.print(f"[green]Scored {n} call/horizon outcomes.[/green]")
-    if n == 0:
+        r = evaluate.score_recommendations()
+    console.print(f"[green]Scored {n} analysis outcomes and {r} recommendation outcomes.[/green]")
+    if n == 0 and r == 0:
         console.print("[dim]No calls are old enough yet — run daily and revisit in a week.[/dim]")
 
 

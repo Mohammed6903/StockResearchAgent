@@ -14,6 +14,12 @@ class Lean(str, Enum):
     BEARISH = "bearish"
 
 
+class Action(str, Enum):
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+
+
 class QuantMetrics(BaseModel):
     """Deterministically computed market metrics. None means data unavailable."""
 
@@ -138,6 +144,23 @@ class Explanation(BaseModel):
     metric_lines: list[str] = Field(default_factory=list)  # one per metric, glossary + value
     walkthrough: str = ""                                   # how numbers + news → the verdict
     news_links: list[str] = Field(default_factory=list)     # news → stock transmission, plain
+
+
+class Recommendation(BaseModel):
+    """An actionable, capital-sized call, logged for later win-rate evaluation."""
+
+    run_date: Date
+    ticker: str
+    action: Action = Action.HOLD
+    shares: float = 0.0          # shares to trade (always >= 0; direction is `action`)
+    amount: float = 0.0          # cash value of the trade, in account currency
+    target_pct: float = 0.0      # intended position size as a fraction of capital
+    price_at_rec: float | None = None
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    lean: Lean = Lean.NEUTRAL
+    score: float = 0.0
+    rationale: str = ""
+    notes: list[str] = Field(default_factory=list)
 
 
 class DailyReport(BaseModel):
