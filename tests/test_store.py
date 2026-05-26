@@ -60,3 +60,35 @@ def test_ticker_history(store):
     store.save_report(_report())
     hist = store.ticker_history("AAPL")
     assert len(hist) == 1 and hist[0]["lean"] == "bullish"
+
+
+def test_persist_analyses_merges_per_ticker(store, monkeypatch):
+    from datetime import date
+
+    import stockresearch.store as store_pkg
+    store_pkg.get_store.cache_clear()
+    monkeypatch.setattr(store_pkg, "get_store", lambda: store)
+    from stockresearch.models import Lean, QuantMetrics, TickerAnalysis, TickerSnapshot
+
+    def call(ticker, lean, score):
+        return (
+            TickerAnalysis(ticker=ticker, lean=lean, score=score,
+                           metrics=QuantMetrics(last_price=10)),
+            TickerSnapshot(ticker=ticker),
+        )
+
+    rd = date(2026, 5, 26)
+    a1, s1 = call("AAA", Lean.BULLISH, 0.5)
+    store_pkg.persist_analyses(rd, [a1], [s1])
+    # second, different ticker the same day -> union
+    a2, s2 = call("BBB", Lean.BEARISH, 0.9)
+    store_pkg.persist_analyses(rd, [a2], [s2])
+    rep = store.load_report(rd)
+    assert {a.ticker for a in rep.analyses} == {"AAA", "BBB"}
+    # re-analyzing AAA replaces (latest wins, no duplicate)
+    a1b, s1b = call("AAA", Lean.NEUTRAL, 0.7)
+    store_pkg.persist_analyses(rd, [a1b], [s1b])
+    rep = store.load_report(rd)
+    aaa = [a for a in rep.analyses if a.ticker == "AAA"]
+    assert len(aaa) == 1 and aaa[0].lean == Lean.NEUTRAL
+    assert len(rep.snapshots) == 2

@@ -42,8 +42,7 @@ def scan(
     """Run the full daily pipeline over the universe; save report + persist to DB."""
     from .agents.orchestrator import run_daily
     from .agents.universe import resolve_universe
-    from .store import get_store
-    db = get_store()
+    from .store import persist_analyses
 
     universe = resolve_universe()
     if limit > 0:
@@ -61,7 +60,11 @@ def scan(
             skip_macro=no_macro, verify=verify, progress=tick,
         )
 
-    db.save_report(rpt)
+    persist_analyses(
+        rpt.run_date, rpt.analyses, rpt.snapshots,
+        macro_summary=rpt.macro_summary, macro_signals=rpt.macro_signals,
+        universe_size=rpt.universe_size, errors=rpt.errors,
+    )
     path = report_mod.save_markdown(rpt)
     report_mod.print_terminal(rpt, console)
     console.print(f"\n[green]Saved[/green] {path} and persisted run {rpt.run_date}.")
@@ -77,15 +80,20 @@ def analyze(
     explain: bool = typer.Option(
         False, "--explain", help="Add a beginner walkthrough of the ratios and news linkage."
     ),
+    no_save: bool = typer.Option(False, "--no-save", help="Don't record this analysis."),
 ):
-    """Deep-dive a single ticker."""
+    """Deep-dive a single ticker (recorded to the day's report unless --no-save)."""
     from .agents.orchestrator import run_single
 
     with console.status(f"Analyzing {ticker.upper()}…"):
-        a, exp = run_single(ticker, reflect=not no_reflect, verify=verify, explain=explain)
+        a, exp = run_single(
+            ticker, reflect=not no_reflect, verify=verify, explain=explain, save=not no_save
+        )
     report_mod.print_single(a, console)
     if exp:
         report_mod.print_explanation(exp, console)
+    if not no_save:
+        console.print(f"\n[dim]Recorded to {Date.today().isoformat()}'s report.[/dim]")
 
 
 @app.command()

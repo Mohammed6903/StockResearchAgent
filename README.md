@@ -233,10 +233,16 @@ stockresearch analyze NVDA
 stockresearch analyze AAPL --no-reflect
 stockresearch analyze AAPL --no-verify   # skip the fundamentals cross-check
 stockresearch analyze TATASTEEL.NS --explain   # add a beginner walkthrough
+stockresearch analyze TCS.NS --no-save   # don't record this one
 ```
 
 Prints lean/score/confidence, the quant metrics, reasoning, pros/cons, and any data
 warnings (including fundamentals mismatches). Verification runs by default here.
+
+Each analysis is **recorded into that day's report** (merged per ticker, latest wins), so
+ad-hoc deep-dives also feed the track record and training export — same as `scan`. Pass
+`--no-save` for a throwaway look. `scan` and `analyze` both contribute to the day's record;
+the day is the union of everything analyzed, from either command.
 
 With `--explain`, it adds a beginner "How to read this" section: each ratio defined in plain
 language with the stock's real value and how it's derived from the actual statement line

@@ -78,11 +78,16 @@ def run_daily(
 
 def run_single(
     ticker: str, *, reflect: bool = True, verify: bool = True, explain: bool = False,
+    save: bool = True,
 ) -> tuple[TickerAnalysis, Explanation | None]:
     settings = load_settings()
     benchmark_closes = get_closes(settings.universe.benchmark, settings.quant.lookback_days)
     _, macro_signals = run_macro_scan()
     snap = build_snapshot(ticker.upper(), benchmark_closes, verify=verify)
     analysis = analyze_from_snapshot(snap, macro_signals, reflect=reflect)
+    if save:
+        from ..store import persist_analyses
+
+        persist_analyses(Date.today(), [analysis], [snap])
     explanation = explain_analysis(snap, analysis) if explain else None
     return analysis, explanation
