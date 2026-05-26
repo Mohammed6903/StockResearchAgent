@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_settings
-from .models import DailyReport, Lean, NewsItem, TickerAnalysis  # noqa: F401
+from .models import DailyReport, Explanation, Lean, NewsItem, TickerAnalysis  # noqa: F401
 
 _LEAN_COLOR = {Lean.BULLISH: "green", Lean.NEUTRAL: "yellow", Lean.BEARISH: "red"}
 
@@ -145,3 +145,20 @@ def print_single(a: TickerAnalysis, console: Console | None = None) -> None:
             console.print(f"  [dim]- {src.title or src.source}[/dim] {link}")
     if a.data_warnings:
         console.print(f"\n[yellow]Data warnings: {', '.join(a.data_warnings)}[/yellow]")
+
+
+def print_explanation(exp: Explanation, console: Console | None = None) -> None:
+    console = console or Console()
+    console.rule("[bold cyan]How to read this (beginner)")
+    if exp.metric_lines:
+        console.print("[bold]Metrics explained:[/bold]")
+        for line in exp.metric_lines:
+            console.print(f"  • {line}")
+    if exp.walkthrough:
+        console.print("\n[bold]Why this verdict:[/bold]")
+        console.print(exp.walkthrough)
+    if exp.news_links:
+        console.print("\n[bold]How the news connects:[/bold]")
+        for link in exp.news_links:
+            console.print(f"  • {link}")
+    console.print("\n[dim]Educational explanation — not investment advice.[/dim]")

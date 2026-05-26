@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import yfinance as yf
 
-from ..models import Fundamentals
+from ..models import Fundamentals, Statements
 from .cache import cached
 
 
@@ -53,6 +53,84 @@ def get_fundamentals(ticker: str) -> Fundamentals:
         total_cash=i.get("totalCash"),
         dividend_yield=i.get("dividendYield"),
     )
+
+
+# Statement line item -> (yfinance statement attr, row label).
+_STATEMENT_MAP: dict[str, tuple[str, str]] = {
+    "total_assets": ("balance_sheet", "Total Assets"),
+    "total_liabilities": ("balance_sheet", "Total Liabilities Net Minority Interest"),
+    "total_equity": ("balance_sheet", "Stockholders Equity"),
+    "current_assets": ("balance_sheet", "Current Assets"),
+    "current_liabilities": ("balance_sheet", "Current Liabilities"),
+    "inventory": ("balance_sheet", "Inventory"),
+    "total_debt": ("balance_sheet", "Total Debt"),
+    "cash": ("balance_sheet", "Cash And Cash Equivalents"),
+    "revenue": ("income_stmt", "Total Revenue"),
+    "gross_profit": ("income_stmt", "Gross Profit"),
+    "operating_income": ("income_stmt", "Operating Income"),
+    "net_income": ("income_stmt", "Net Income"),
+    "interest_expense": ("income_stmt", "Interest Expense"),
+    "operating_cashflow": ("cashflow", "Operating Cash Flow"),
+    "capex": ("cashflow", "Capital Expenditure"),
+    "free_cashflow": ("cashflow", "Free Cash Flow"),
+}
+
+
+def get_statements(ticker: str) -> Statements:
+    """Latest annual balance-sheet / income / cash-flow line items. Missing rows stay None."""
+
+    def produce() -> dict:
+        out: dict = {}
+        try:
+            tk = yf.Ticker(ticker)
+            frames = {
+                "balance_sheet": tk.balance_sheet,
+                "income_stmt": tk.income_stmt,
+                "cashflow": tk.cashflow,
+            }
+        except Exception:
+            return {}
+        for field, (stmt, row) in _STATEMENT_MAP.items():
+            df = frames.get(stmt)
+            try:
+                if df is None or df.empty or row not in df.index:
+                    continue
+                val = df.loc[row].iloc[0]
+                if val is not None and not pd.isna(val):
+                    out[field] = float(val)
+            except Exception:
+                continue
+        try:
+            bs = frames["balance_sheet"]
+            if bs is not None and not bs.empty:
+                out["period"] = bs.columns[0].strftime("%Y-%m-%d")
+        except Exception:
+            pass
+        return out
+
+    data = cached(f"statements:{ticker}", produce)
+    return Statements(**data) if data else Statements()
+
+
+def price_on_or_after(ticker: str, target_iso: str) -> float | None:
+    """First available close on/after target_iso (handles weekends/holidays). None if none."""
+    from datetime import date, timedelta
+
+    def produce() -> dict:
+        try:
+            start = date.fromisoformat(target_iso)
+            end = start + timedelta(days=10)
+            df = yf.Ticker(ticker).history(
+                start=start.isoformat(), end=end.isoformat(), auto_adjust=True
+            )
+            if df is None or df.empty or "Close" not in df:
+                return {}
+            return {"price": float(df["Close"].dropna().iloc[0])}
+        except Exception:
+            return {}
+
+    data = cached(f"priceon:{ticker}:{target_iso}", produce)
+    return data.get("price")
 
 
 def get_closes(ticker: str, days: int) -> pd.Series:

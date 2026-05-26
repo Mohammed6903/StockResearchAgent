@@ -9,9 +9,10 @@ from datetime import date as Date
 
 from ..config import load_settings
 from ..data.yfinance_adapter import get_closes
-from ..models import DailyReport, TickerAnalysis
+from ..models import DailyReport, Explanation, TickerAnalysis, TickerSnapshot
+from .explainer import explain_analysis
 from .macro_agent import run_macro_scan
-from .ticker_analyst import analyze_ticker
+from .ticker_analyst import analyze_from_snapshot, build_snapshot
 from .universe import resolve_universe
 
 log = logging.getLogger("stockresearch")
@@ -41,20 +42,21 @@ def run_daily(
     benchmark_closes = get_closes(settings.universe.benchmark, settings.quant.lookback_days)
 
     analyses: list[TickerAnalysis] = []
+    snapshots: list[TickerSnapshot] = []
     errors: list[str] = []
 
-    def work(t: str) -> TickerAnalysis:
-        return analyze_ticker(
-            t, benchmark_closes, macro_signals,
-            reflect=reflect, fetch_news=fetch_news, verify=verify,
-        )
+    def work(t: str) -> tuple[TickerAnalysis, TickerSnapshot]:
+        snap = build_snapshot(t, benchmark_closes, fetch_news=fetch_news, verify=verify)
+        return analyze_from_snapshot(snap, macro_signals, reflect=reflect), snap
 
     with ThreadPoolExecutor(max_workers=settings.runtime.concurrency) as pool:
         futures = {pool.submit(work, t): t for t in universe}
         for fut in as_completed(futures):
             t = futures[fut]
             try:
-                analyses.append(fut.result())
+                analysis, snap = fut.result()
+                analyses.append(analysis)
+                snapshots.append(snap)
             except Exception as e:
                 msg = f"{t}: {e}"
                 errors.append(msg)
@@ -69,15 +71,18 @@ def run_daily(
         macro_summary=macro_summary,
         macro_signals=macro_signals,
         analyses=analyses,
+        snapshots=snapshots,
         errors=errors,
     )
 
 
-def run_single(ticker: str, *, reflect: bool = True, verify: bool = True) -> TickerAnalysis:
+def run_single(
+    ticker: str, *, reflect: bool = True, verify: bool = True, explain: bool = False,
+) -> tuple[TickerAnalysis, Explanation | None]:
     settings = load_settings()
     benchmark_closes = get_closes(settings.universe.benchmark, settings.quant.lookback_days)
-    macro_summary, macro_signals = run_macro_scan()
-    _ = macro_summary
-    return analyze_ticker(
-        ticker.upper(), benchmark_closes, macro_signals, reflect=reflect, verify=verify
-    )
+    _, macro_signals = run_macro_scan()
+    snap = build_snapshot(ticker.upper(), benchmark_closes, verify=verify)
+    analysis = analyze_from_snapshot(snap, macro_signals, reflect=reflect)
+    explanation = explain_analysis(snap, analysis) if explain else None
+    return analysis, explanation

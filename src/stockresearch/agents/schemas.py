@@ -49,3 +49,19 @@ class CritiqueResult(BaseModel):
     needs_revision: bool = False
     issues: list[str] = Field(default_factory=list)
     revised: AnalystVerdict
+
+
+class TeachingNote(BaseModel):
+    """Beginner narration produced by the explainer. Formulas come from the static glossary;
+    this is interpretation only."""
+
+    walkthrough: str = Field(
+        default="",
+        description="plain-English, beginner walkthrough of how the numbers and recent news "
+        "led to the verdict; ties metrics to the conclusion",
+    )
+    news_links: list[str] = Field(
+        default_factory=list,
+        description="one bullet per material recent news item explaining, in plain terms, "
+        "the chain from the event to this stock's price drivers",
+    )

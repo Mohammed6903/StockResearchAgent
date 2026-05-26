@@ -121,11 +121,14 @@ run.
 | `src/stockresearch/gemini.py` | Vertex env setup + cached `google-genai` client. |
 | `src/stockresearch/data/` | Data adapters: `yfinance_adapter`, `news_adapter` (grounding), `index_membership` (S&P 500), `verify` (2nd-source fundamentals cross-check), `cache` (day-level disk cache). |
 | `src/stockresearch/quant/metrics.py` | Deterministic beta/alpha/Sharpe/volatility/drawdown/returns. No LLM, no network. |
-| `src/stockresearch/agents/` | `universe`, `macro_agent`, `ticker_analyst` (+reflection), `orchestrator`, `reason` (structured-output helper), `schemas` (internal LLM output schemas). |
-| `src/stockresearch/store/db.py` | SQLite persistence + track-record queries. |
+| `src/stockresearch/agents/` | `universe`, `macro_agent`, `ticker_analyst` (+reflection), `explainer` (beginner teaching), `orchestrator`, `reason` (structured-output helper), `schemas`. |
+| `src/stockresearch/glossary.py` | Static, authoritative metric definitions/formulas (no LLM). |
+| `src/stockresearch/evaluate.py` | Outcome scoring, calibration, training-data export. Deterministic. |
+| `src/stockresearch/portfolio.py` | Holdings review: value/P&L/weights + diversification checks. |
+| `src/stockresearch/store/db.py` | SQLite persistence: runs, analyses, macro signals, outcomes + queries. |
 | `src/stockresearch/report.py` | Markdown + `rich` terminal rendering. |
-| `src/stockresearch/cli.py` | Typer CLI entrypoint. |
-| `tests/` | Quant, store, and mocked-agent tests (no network). |
+| `src/stockresearch/cli.py` | Typer CLI: scan/analyze/macro/explain/score/calibration/export/watch/config/portfolio. |
+| `tests/` | Quant, store, agents, verify, citations, india, evaluate, portfolio — all no-network. |
 
 ---
 
@@ -229,10 +232,17 @@ stockresearch scan --verify          # cross-check fundamentals (uses AV quota)
 stockresearch analyze NVDA
 stockresearch analyze AAPL --no-reflect
 stockresearch analyze AAPL --no-verify   # skip the fundamentals cross-check
+stockresearch analyze TATASTEEL.NS --explain   # add a beginner walkthrough
 ```
 
 Prints lean/score/confidence, the quant metrics, reasoning, pros/cons, and any data
 warnings (including fundamentals mismatches). Verification runs by default here.
+
+With `--explain`, it adds a beginner "How to read this" section: each ratio defined in plain
+language with the stock's real value and how it's derived from the actual statement line
+items (e.g. `current ratio = current assets ₹X ÷ current liabilities ₹Y`), a plain-English
+walkthrough of how the numbers + recent news produced the verdict, and the news→stock
+linkage. One extra LLM call; on-demand only.
 
 ### `macro` — political/macro scan only
 
@@ -313,6 +323,46 @@ the basis for later scoring prediction accuracy against realized moves.
 stockresearch track GOOGL
 ```
 
+### `explain [TERM]` — learn the metrics
+
+Plain-language glossary (no LLM, no cost). With no argument it lists every metric; with a
+term it explains what it is, the formula, which statement it comes from, how to read it, and
+caveats (including India notes).
+
+```bash
+stockresearch explain                 # list all terms
+stockresearch explain pe              # P/E ratio
+stockresearch explain debt_to_equity
+```
+
+### `score` / `calibration` / `export` — outcomes & training data
+
+Turn your run history into a feedback loop and a labeled dataset for a future custom model.
+
+```bash
+stockresearch score                   # grade past calls vs realized 7/30/90d returns
+stockresearch calibration             # hit-rate by confidence bucket and by lean
+stockresearch export data/train.jsonl # dump {inputs, verdict, outcomes} as JSONL
+```
+
+`score` only grades calls old enough for each horizon (run daily and revisit). `calibration`
+tells you whether the tool's confidence is meaningful and whether bullish/bearish actually
+predict direction. `export` joins each run's stored snapshot (inputs), the verdict, and the
+realized forward returns — the dataset to train/evaluate a finance model on.
+
+### `portfolio` — track and review your holdings
+
+```bash
+stockresearch portfolio add RELIANCE.NS --qty 10 --price 1200
+stockresearch portfolio remove TCS.NS
+stockresearch portfolio list
+stockresearch portfolio review        # live value, P&L, weights, diversification flags
+```
+
+`review` prices your holdings live, shows P&L and each position's weight and sector, pulls
+the latest stored lean per holding, and flags concentration / heavy sector exposure / too few
+names — framed as beginner education, **not advice**.
+
 ---
 
 ## Development
@@ -346,7 +396,7 @@ Ranked Analysis (4 scanned)
 
 - Add SEC EDGAR as an additional (no-key, authoritative) verification source alongside
   Alpha Vantage.
-- Prediction-accuracy scorer: grade past calls against realized forward returns.
+- Train a custom finance model on the exported dataset and A/B it against Gemini.
 - Scheduled daily runs (cron) with a pushed digest.
 - Optional ADK `Agent`/`Runner` runtime for conversational follow-ups.
 

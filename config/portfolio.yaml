@@ -1,0 +1,3 @@
+# Your actual holdings. Manage with `stockresearch portfolio add/remove`, review with
+# `stockresearch portfolio review`. Quantities are shares; avg_price is your buy price.
+holdings: []

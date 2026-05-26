@@ -18,7 +18,7 @@ import pandas as pd
 from ..config import load_settings
 from ..data.news_adapter import get_company_news
 from ..data.verify import verify_fundamentals
-from ..data.yfinance_adapter import get_closes, get_fundamentals
+from ..data.yfinance_adapter import get_closes, get_fundamentals, get_statements
 from ..models import MacroSignal, QuantMetrics, TickerAnalysis, TickerSnapshot
 from ..quant.metrics import compute_metrics
 from .reason import reason
@@ -37,6 +37,8 @@ def build_snapshot(
     elif verify:
         warnings.extend(verify_fundamentals(ticker, fundamentals))
 
+    statements = get_statements(ticker)
+
     closes = get_closes(ticker, q.lookback_days)
     if closes.empty:
         warnings.append("price history unavailable")
@@ -51,13 +53,14 @@ def build_snapshot(
         news_text, news_items = get_company_news(ticker, fundamentals.name)
 
     return TickerSnapshot(
-        ticker=ticker, fundamentals=fundamentals, metrics=metrics,
+        ticker=ticker, fundamentals=fundamentals, statements=statements, metrics=metrics,
         news=news_items, news_text=news_text, data_warnings=warnings,
     )
 
 
 def _facts_block(snap: TickerSnapshot, macro_signals: list[MacroSignal]) -> str:
     fund = {k: v for k, v in snap.fundamentals.model_dump().items() if v is not None}
+    stmts = {k: v for k, v in snap.statements.model_dump().items() if v is not None}
     met = {k: v for k, v in snap.metrics.model_dump().items() if v is not None}
     news_text = snap.news_text
     relevant_macro = [
@@ -71,6 +74,7 @@ def _facts_block(snap: TickerSnapshot, macro_signals: list[MacroSignal]) -> str:
         f"TICKER: {snap.ticker} ({snap.fundamentals.name or 'unknown'})\n"
         f"SECTOR: {snap.fundamentals.sector or 'unknown'}\n"
         f"FUNDAMENTALS: {json.dumps(fund, default=str)}\n"
+        f"STATEMENT LINE ITEMS (latest filing): {json.dumps(stmts, default=str)}\n"
         f"QUANT METRICS (computed deterministically): {json.dumps(met, default=str)}\n"
         f"RECENT NEWS: {news_text or 'none found'}\n"
         f"RELEVANT MACRO SIGNALS: {json.dumps(relevant_macro, default=str)}\n"
@@ -122,11 +126,11 @@ def _reflect(facts: str, verdict: AnalystVerdict) -> AnalystVerdict:
     return critique.revised
 
 
-def analyze_ticker(
-    ticker: str, benchmark_closes: pd.Series, macro_signals: list[MacroSignal],
-    *, reflect: bool = True, fetch_news: bool = True, verify: bool = False,
+def analyze_from_snapshot(
+    snap: TickerSnapshot, macro_signals: list[MacroSignal], *, reflect: bool = True,
 ) -> TickerAnalysis:
-    snap = build_snapshot(ticker, benchmark_closes, fetch_news=fetch_news, verify=verify)
+    """The reasoning step, given an already-built snapshot. Separated so the orchestrator can
+    persist the snapshot and the explainer can reuse it."""
     facts = _facts_block(snap, macro_signals)
     verdict = _analyze(facts)
     if reflect:
@@ -145,3 +149,11 @@ def analyze_ticker(
         sources=snap.news,
         data_warnings=snap.data_warnings,
     )
+
+
+def analyze_ticker(
+    ticker: str, benchmark_closes: pd.Series, macro_signals: list[MacroSignal],
+    *, reflect: bool = True, fetch_news: bool = True, verify: bool = False,
+) -> TickerAnalysis:
+    snap = build_snapshot(ticker, benchmark_closes, fetch_news=fetch_news, verify=verify)
+    return analyze_from_snapshot(snap, macro_signals, reflect=reflect)

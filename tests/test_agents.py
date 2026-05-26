@@ -52,15 +52,21 @@ def test_reflection_can_override_verdict(fake_data, monkeypatch):
 
 
 def test_orchestrator_isolates_bad_ticker(monkeypatch):
+    from stockresearch.models import TickerSnapshot
+
     monkeypatch.setattr(orchestrator, "run_macro_scan", lambda: ("", []))
     monkeypatch.setattr(orchestrator, "get_closes", lambda t, d: pd.Series(dtype=float))
 
-    def fake_analyze(t, bench, macro, reflect, fetch_news, verify):
+    def fake_build(t, bench, *, fetch_news=True, verify=False):
         if t == "BOOM":
             raise RuntimeError("data feed exploded")
-        return ticker_analyst.TickerAnalysis(ticker=t, score=0.5, metrics=QuantMetrics())
+        return TickerSnapshot(ticker=t)
 
-    monkeypatch.setattr(orchestrator, "analyze_ticker", fake_analyze)
+    def fake_analyze(snap, macro, *, reflect=True):
+        return ticker_analyst.TickerAnalysis(ticker=snap.ticker, score=0.5, metrics=QuantMetrics())
+
+    monkeypatch.setattr(orchestrator, "build_snapshot", fake_build)
+    monkeypatch.setattr(orchestrator, "analyze_from_snapshot", fake_analyze)
 
     report = orchestrator.run_daily(["GOOD1", "BOOM", "GOOD2"], skip_macro=True)
     tickers = {a.ticker for a in report.analyses}

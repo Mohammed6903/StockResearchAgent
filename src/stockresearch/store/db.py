@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS macro_signals (
     affected_tickers TEXT,
     sources     TEXT
 );
+CREATE TABLE IF NOT EXISTS outcomes (
+    run_date    TEXT NOT NULL,
+    ticker      TEXT NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    lean        TEXT,
+    confidence  REAL,
+    price_then  REAL,
+    price_later REAL,
+    forward_return REAL,
+    correct     INTEGER,
+    PRIMARY KEY (run_date, ticker, horizon_days)
+);
 CREATE INDEX IF NOT EXISTS idx_ta_ticker ON ticker_analysis(ticker);
 """
 
@@ -128,6 +140,37 @@ def ticker_history(ticker: str) -> list[dict]:
             "FROM ticker_analysis WHERE ticker = ? ORDER BY run_date",
             (ticker.upper(),),
         ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def all_calls() -> list[dict]:
+    """Every stored per-ticker call (the basis for outcome scoring)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT run_date, ticker, lean, confidence, last_price FROM ticker_analysis "
+            "ORDER BY run_date"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_outcome(
+    run_date: str, ticker: str, horizon_days: int, lean: str, confidence: float | None,
+    price_then: float | None, price_later: float | None, forward_return: float | None,
+    correct: bool | None,
+) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO outcomes (run_date, ticker, horizon_days, lean, "
+            "confidence, price_then, price_later, forward_return, correct) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (run_date, ticker, horizon_days, lean, confidence, price_then, price_later,
+             forward_return, None if correct is None else int(correct)),
+        )
+
+
+def outcomes_rows() -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM outcomes WHERE forward_return IS NOT NULL").fetchall()
     return [dict(r) for r in rows]
 
 

@@ -41,6 +41,10 @@ def _watchlist_path() -> Path:
     return project_root() / "config" / "watchlist.yaml"
 
 
+def _portfolio_path() -> Path:
+    return project_root() / "config" / "portfolio.yaml"
+
+
 def _load(path: Path):
     return _yaml.load(path.read_text())
 
@@ -88,6 +92,49 @@ def remove_watchlist(tickers: list[str]) -> tuple[list[str], list[str]]:
 def clear_watchlist() -> None:
     data = _load(_watchlist_path())
     _write_tickers(data, [])
+
+
+# ---- portfolio (holdings) --------------------------------------------------------------
+
+def list_holdings() -> list[dict]:
+    path = _portfolio_path()
+    if not path.exists():
+        return []
+    data = _load(path)
+    out = []
+    for h in (data.get("holdings") or []):
+        out.append({
+            "ticker": str(h.get("ticker", "")).strip().upper(),
+            "qty": float(h.get("qty", 0) or 0),
+            "avg_price": float(h.get("avg_price", 0) or 0),
+        })
+    return [h for h in out if h["ticker"]]
+
+
+def _write_holdings(holdings: list[dict]) -> None:
+    path = _portfolio_path()
+    data = _load(path) if path.exists() else {}
+    data["holdings"] = holdings
+    _dump(path, data)
+
+
+def add_holding(ticker: str, qty: float, avg_price: float) -> list[dict]:
+    """Upsert a holding (replaces qty/avg_price if the ticker already exists)."""
+    t = ticker.strip().upper()
+    holdings = list_holdings()
+    holdings = [h for h in holdings if h["ticker"] != t]
+    holdings.append({"ticker": t, "qty": qty, "avg_price": avg_price})
+    _write_holdings(holdings)
+    return holdings
+
+
+def remove_holding(ticker: str) -> tuple[bool, list[dict]]:
+    t = ticker.strip().upper()
+    holdings = list_holdings()
+    removed = any(h["ticker"] == t for h in holdings)
+    holdings = [h for h in holdings if h["ticker"] != t]
+    _write_holdings(holdings)
+    return removed, holdings
 
 
 # ---- settings --------------------------------------------------------------------------

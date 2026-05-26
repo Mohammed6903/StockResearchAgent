@@ -16,8 +16,10 @@ from .gemini import configure_vertex_env
 app = typer.Typer(help="Agentic daily stock research (Vertex AI Gemini).", no_args_is_help=True)
 watch_app = typer.Typer(help="Manage tracked tickers (watchlist).", no_args_is_help=True)
 config_app = typer.Typer(help="View and update settings.", no_args_is_help=True)
+portfolio_app = typer.Typer(help="Track your holdings and review them.", no_args_is_help=True)
 app.add_typer(watch_app, name="watch")
 app.add_typer(config_app, name="config")
+app.add_typer(portfolio_app, name="portfolio")
 console = Console()
 
 
@@ -71,13 +73,43 @@ def analyze(
     verify: bool = typer.Option(
         True, "--verify/--no-verify", help="Cross-check fundamentals vs 2nd source."
     ),
+    explain: bool = typer.Option(
+        False, "--explain", help="Add a beginner walkthrough of the ratios and news linkage."
+    ),
 ):
     """Deep-dive a single ticker."""
     from .agents.orchestrator import run_single
 
     with console.status(f"Analyzing {ticker.upper()}…"):
-        a = run_single(ticker, reflect=not no_reflect, verify=verify)
+        a, exp = run_single(ticker, reflect=not no_reflect, verify=verify, explain=explain)
     report_mod.print_single(a, console)
+    if exp:
+        report_mod.print_explanation(exp, console)
+
+
+@app.command()
+def explain(term: str = typer.Argument(None, help="Metric to explain, e.g. 'pe', 'sharpe'")):
+    """Explain a financial metric in plain language (no arg = list all terms)."""
+    from . import glossary
+
+    if not term:
+        console.print("[bold]Metrics you can explain:[/bold]")
+        for t in glossary.all_terms():
+            console.print(f"  [cyan]{t.key}[/cyan] — {t.name}")
+        console.print("\n[dim]Run `stockresearch explain <term>` for details.[/dim]")
+        return
+    t = glossary.lookup(term)
+    if not t:
+        console.print(f"[red]No metric matches '{term}'.[/red] Try `stockresearch explain`.")
+        raise typer.Exit(1)
+    console.rule(f"[bold]{t.name}")
+    console.print(f"[bold]What it is:[/bold] {t.definition}")
+    console.print(f"[bold]Formula:[/bold] {t.formula}")
+    console.print(f"[bold]Comes from:[/bold] {t.derived_from}")
+    console.print(f"[bold]How to read it:[/bold] {t.how_to_read}")
+    if t.india_note:
+        console.print(f"[bold]India note:[/bold] {t.india_note}")
+    console.print(f"[yellow]Caveat:[/yellow] {t.caveat}")
 
 
 @app.command()
@@ -132,6 +164,55 @@ def runs():
     for r in db.list_runs():
         table.add_row(r["run_date"], str(r["universe_size"]), str(r["created_at"]))
     console.print(table)
+
+
+@app.command()
+def score():
+    """Grade past calls against realized forward returns (7/30/90d where matured)."""
+    from . import evaluate
+
+    with console.status("Scoring matured calls…"):
+        n = evaluate.score_matured()
+    console.print(f"[green]Scored {n} call/horizon outcomes.[/green]")
+    if n == 0:
+        console.print("[dim]No calls are old enough yet — run daily and revisit in a week.[/dim]")
+
+
+@app.command()
+def calibration():
+    """Show whether stated confidence and leans match realized outcomes."""
+    from . import evaluate
+
+    c = evaluate.calibration()
+    if not c:
+        console.print("[yellow]No scored outcomes yet. Run `stockresearch score` first.[/yellow]")
+        raise typer.Exit()
+    console.print(f"[bold]Overall accuracy:[/bold] {c['overall_accuracy']:.0%} "
+                  f"over {c['total']} outcomes\n")
+    t1 = Table(title="Accuracy by stated confidence")
+    for col in ("Confidence", "N", "Hit rate"):
+        t1.add_column(col)
+    for label, d in c["by_confidence"].items():
+        hit = f"{d['correct'] / d['n']:.0%}" if d["n"] else "—"
+        t1.add_row(label, str(d["n"]), hit)
+    console.print(t1)
+    t2 = Table(title="By lean")
+    for col in ("Lean", "N", "Hit rate", "Avg fwd return"):
+        t2.add_column(col)
+    for lean, d in c["by_lean"].items():
+        hit = f"{d['correct'] / d['n']:.0%}" if d["n"] else "—"
+        avg = f"{d['ret_sum'] / d['n'] * 100:.1f}%" if d["n"] else "—"
+        t2.add_row(lean, str(d["n"]), hit, avg)
+    console.print(t2)
+
+
+@app.command()
+def export(path: str = typer.Argument(..., help="Output .jsonl path for training data")):
+    """Export labeled training data (inputs + verdict + realized outcomes) as JSONL."""
+    from . import evaluate
+
+    n = evaluate.export_jsonl(path)
+    console.print(f"[green]Wrote {n} rows[/green] to {path}")
 
 
 @app.command()
@@ -247,6 +328,84 @@ def config_set(
         console.print("[dim]Editable keys:[/dim] " + ", ".join(sorted(manage.SETTABLE)))
         raise typer.Exit(1) from None
     console.print(f"[green]Set[/green] {key} = {new}")
+
+
+# ---- portfolio: holdings & review ------------------------------------------------------
+
+@portfolio_app.command("add")
+def portfolio_add(
+    ticker: str,
+    qty: float = typer.Option(..., "--qty", help="Number of shares held."),
+    price: float = typer.Option(..., "--price", help="Your average buy price."),
+):
+    """Add or update a holding."""
+    holdings = manage.add_holding(ticker, qty, price)
+    console.print(f"[green]Saved[/green] {ticker.upper()}: {qty} @ {price}")
+    console.print(f"[dim]{len(holdings)} holding(s) tracked.[/dim]")
+
+
+@portfolio_app.command("remove")
+def portfolio_remove(ticker: str):
+    """Remove a holding."""
+    removed, holdings = manage.remove_holding(ticker)
+    if removed:
+        console.print(f"[red]Removed[/red] {ticker.upper()}")
+    else:
+        console.print(f"[yellow]{ticker.upper()} not in portfolio.[/yellow]")
+    console.print(f"[dim]{len(holdings)} holding(s) tracked.[/dim]")
+
+
+@portfolio_app.command("list")
+def portfolio_list():
+    """List your tracked holdings (as entered)."""
+    holdings = manage.list_holdings()
+    if not holdings:
+        console.print("[yellow]No holdings. Add one with `portfolio add`.[/yellow]")
+        return
+    table = Table(title="Holdings")
+    for col in ("Ticker", "Qty", "Avg price"):
+        table.add_column(col)
+    for h in holdings:
+        table.add_row(h["ticker"], f"{h['qty']:g}", f"{h['avg_price']:g}")
+    console.print(table)
+
+
+@portfolio_app.command("review")
+def portfolio_review():
+    """Live value, P&L, weights, and beginner diversification checks."""
+    from . import portfolio as pf
+
+    with console.status("Pricing your holdings…"):
+        r = pf.review()
+    if not r:
+        console.print("[yellow]No holdings. Add one with `portfolio add`.[/yellow]")
+        return
+
+    table = Table(title="Portfolio")
+    for col in ("Ticker", "Qty", "Value", "P&L", "P&L %", "Weight", "Sector", "Lean"):
+        table.add_column(col)
+    for h in r["rows"]:
+        pl = h["pl"]
+        pl_color = "green" if (pl or 0) >= 0 else "red"
+        table.add_row(
+            h["ticker"], f"{h['qty']:g}",
+            f"{h['value']:,.0f}" if h["value"] is not None else "—",
+            f"[{pl_color}]{pl:,.0f}[/{pl_color}]" if pl is not None else "—",
+            f"[{pl_color}]{h['pl_pct'] * 100:.1f}%[/{pl_color}]" if h["pl_pct"] is not None else "—",
+            f"{h['weight'] * 100:.0f}%" if h["weight"] is not None else "—",
+            h["sector"], h["latest_lean"] or "—",
+        )
+    console.print(table)
+    pl_color = "green" if r["total_pl"] >= 0 else "red"
+    console.print(
+        f"\nTotal value: {r['total_value']:,.0f}  |  Cost: {r['total_cost']:,.0f}  |  "
+        f"P&L: [{pl_color}]{r['total_pl']:,.0f}[/{pl_color}]"
+    )
+    if r["flags"]:
+        console.print("\n[bold yellow]Things to think about:[/bold yellow]")
+        for f in r["flags"]:
+            console.print(f"  • {f}")
+    console.print("\n[dim]Educational checks, not investment advice.[/dim]")
 
 
 if __name__ == "__main__":
