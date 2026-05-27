@@ -1,9 +1,10 @@
-"""Turn an analysis into an actionable, capital-sized BUY/SELL/HOLD recommendation.
+"""Turn the (deterministic, factor-based) analysis score into an actionable, capital-sized
+BUY/SELL/HOLD call.
 
-The LLM chooses the direction and a *target position size* (as a fraction of capital), aware
-of the capital scale and the current holding. Python then does all the sizing arithmetic and
-enforces the hard constraints — the per-position cap, "can't sell what you don't own", and
-"can't buy without a price" — so no share count is ever hallucinated.
+Direction and sizing are derived **deterministically** from the composite score, the current
+holding, and the configured capital — no LLM step, because letting the model choose the action
+just collapses everything to a hedged HOLD. Conviction scales the position toward the
+per-position cap. The rationale reuses the analyst's narrative plus a templated action line.
 """
 
 from __future__ import annotations
@@ -12,93 +13,66 @@ import math
 from datetime import date as Date
 
 from ..models import Action, Recommendation, TickerAnalysis, TickerSnapshot
-from .reason import reason
-from .schemas import AdviceVerdict
+from ..quant.score import BUY_THRESHOLD, SELL_THRESHOLD
+
+_FULL_EXIT_SCORE = 0.25  # at/below this, sell the entire holding
 
 
-def _verdict(snapshot: TickerSnapshot, analysis: TickerAnalysis, *, capital: float,
-             max_position_pct: float, held_qty: float, price: float) -> AdviceVerdict:
-    held_value = held_qty * price
-    max_position_value = capital * max_position_pct
-    facts = {
-        "ticker": snapshot.ticker,
-        "name": analysis.name,
-        "analysis_lean": analysis.lean.value,
-        "analysis_score": analysis.score,
-        "analysis_confidence": analysis.confidence,
-        "reasoning": analysis.reasoning,
-        "pros": analysis.pros,
-        "cons": analysis.cons,
-        "price": price,
-        "total_capital": capital,
-        "max_position_value": max_position_value,
-        "max_position_pct": max_position_pct,
-        "current_holding_shares": held_qty,
-        "current_holding_value": held_value,
-        "current_weight_pct": (held_value / capital) if capital else 0.0,
-    }
-    prompt = (
-        "You are a portfolio manager turning the research below into ONE actionable call for "
-        "this single stock. Decide action (buy/sell/hold) and the target position size for "
-        f"this stock as a fraction of total capital. You MUST NOT exceed the per-position cap "
-        f"of {max_position_pct:.0%} of capital. Be proportionate to the conviction (score and "
-        "confidence) and mindful of the capital scale and the current holding shown. "
-        "SELL only makes sense if there is a current holding. This is research sizing, not "
-        "financial advice.\n\n"
-        f"FACTS:\n{facts}\n"
-    )
-    return reason(prompt, AdviceVerdict, temperature=0.2)
+def _buy_target_pct(score: float, max_position_pct: float) -> float:
+    """Scale position size with conviction: ~40% of the cap at the buy threshold, full cap as
+    the score approaches 1."""
+    frac = (score - BUY_THRESHOLD) / max(1e-9, 1.0 - BUY_THRESHOLD)
+    return max_position_pct * (0.4 + 0.6 * max(0.0, min(1.0, frac)))
 
 
 def advise(snapshot: TickerSnapshot, analysis: TickerAnalysis, *, capital: float,
            max_position_pct: float, held_qty: float, run_date: Date | None = None) -> Recommendation:
     run_date = run_date or Date.today()
     price = snapshot.metrics.last_price
+    score = analysis.score
+    rec = Recommendation(
+        run_date=run_date, ticker=snapshot.ticker, lean=analysis.lean, score=score,
+        confidence=analysis.confidence, price_at_rec=price, rationale=analysis.reasoning,
+    )
     notes: list[str] = []
 
-    base = Recommendation(
-        run_date=run_date, ticker=snapshot.ticker, lean=analysis.lean,
-        score=analysis.score, confidence=analysis.confidence, price_at_rec=price,
-    )
-
     if not capital or capital <= 0:
-        base.notes = ["no capital configured; set account.capital"]
-        return base
+        rec.notes = ["no capital configured; set account.capital"]
+        return rec
     if price is None or price <= 0:
-        base.notes = ["price unavailable; cannot size a trade"]
-        return base
+        rec.notes = ["price unavailable; cannot size a trade"]
+        return rec
+    if not analysis.factors:
+        rec.notes = ["insufficient quant data to score; no actionable call"]
+        return rec
 
-    v = _verdict(snapshot, analysis, capital=capital, max_position_pct=max_position_pct,
-                 held_qty=held_qty, price=price)
-    base.confidence = v.confidence
-    base.rationale = v.rationale
-
-    target_pct = max(0.0, min(v.target_pct_of_capital, max_position_pct))
-    if v.target_pct_of_capital > max_position_pct:
-        notes.append(f"target trimmed to per-position cap of {max_position_pct:.0%}")
-    target_shares = math.floor(target_pct * capital / price)
-    delta = target_shares - held_qty  # +want to buy, -want to sell
-
-    if v.action == Action.BUY:
+    if score >= BUY_THRESHOLD:
+        target_pct = _buy_target_pct(score, max_position_pct)
+        target_shares = math.floor(target_pct * capital / price)
+        delta = target_shares - held_qty
         if delta > 0:
-            base.action = Action.BUY
-            base.shares = float(delta)
+            rec.action = Action.BUY
+            rec.shares = float(delta)
+            rec.target_pct = round(target_pct, 4)
         else:
-            base.action = Action.HOLD
-            notes.append("already at/above target size; no buy needed")
-    elif v.action == Action.SELL:
-        if held_qty <= 0:
-            base.action = Action.HOLD
-            notes.append("no holding to sell")
+            rec.action = Action.HOLD
+            notes.append("attractive, but already at/above target size — no buy needed")
+    elif score <= SELL_THRESHOLD:
+        if held_qty > 0:
+            if score <= _FULL_EXIT_SCORE:
+                sell = held_qty
+            else:
+                frac = (SELL_THRESHOLD - score) / max(1e-9, SELL_THRESHOLD - _FULL_EXIT_SCORE)
+                sell = math.ceil(held_qty * (0.5 + 0.5 * max(0.0, min(1.0, frac))))
+            rec.action = Action.SELL
+            rec.shares = float(min(held_qty, sell))
         else:
-            sell_shares = held_qty if target_shares >= held_qty else (held_qty - target_shares)
-            sell_shares = min(held_qty, max(0.0, sell_shares)) or held_qty
-            base.action = Action.SELL
-            base.shares = float(sell_shares)
+            rec.action = Action.HOLD
+            notes.append("weak score — avoid; nothing held to sell")
     else:
-        base.action = Action.HOLD
+        rec.action = Action.HOLD
+        notes.append("middling score — no clear edge either way")
 
-    base.target_pct = target_pct
-    base.amount = round(base.shares * price, 2)
-    base.notes = notes
-    return base
+    rec.amount = round(rec.shares * price, 2)
+    rec.notes = notes
+    return rec

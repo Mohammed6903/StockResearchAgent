@@ -21,6 +21,7 @@ from ..data.verify import verify_fundamentals
 from ..data.yfinance_adapter import get_closes, get_fundamentals, get_statements
 from ..models import MacroSignal, QuantMetrics, TickerAnalysis, TickerSnapshot
 from ..quant.metrics import compute_metrics
+from ..quant.score import ScoreResult, composite_score, lean_from_score
 from .reason import reason
 from .schemas import AnalystVerdict, CritiqueResult
 
@@ -82,27 +83,28 @@ def _facts_block(snap: TickerSnapshot, macro_signals: list[MacroSignal]) -> str:
     )
 
 
-def _analyze(facts: str) -> AnalystVerdict:
+_NUDGE_BAND = 0.10  # max the LLM may move the deterministic composite score
+
+
+def _analyze(facts: str, sr: ScoreResult) -> AnalystVerdict:
     today = date.today().isoformat()
+    lo, hi = round(sr.score - _NUDGE_BAND, 3), round(sr.score + _NUDGE_BAND, 3)
     prompt = (
-        f"Today's date is {today}. You are an equity research analyst. Produce an analytical "
-        "verdict using ONLY the facts below.\n"
-        "CRITICAL RULES ON RECENCY:\n"
-        "- The FUNDAMENTALS and QUANT METRICS are LIVE as of today; treat them as current.\n"
-        "- RECENT NEWS items may be mis-dated by the search. Treat as current ONLY items "
-        "clearly dated within the last ~1-2 months. IGNORE anything older (e.g. a prior-year "
-        "'Q4 FY24' result) and NEVER describe a prior-year event as recent.\n"
-        "- Do NOT use any prior/training knowledge of specific past events, earnings quarters, "
-        "capital raises, litigation, or figures that are not present below.\n"
-        "- Do NOT attribute a live fundamental to a named fiscal quarter unless that period is "
-        "explicitly and recently dated in the news.\n"
-        "- If RECENT NEWS conflicts with the live fundamentals (e.g. news says profit fell but "
-        "earnings_growth is positive), PREFER the live fundamentals and note the conflict.\n\n"
-        "Weigh valuation (P/E, P/B, PEG), profitability/margins, leverage (debt/equity, current "
-        "ratio), growth, risk-adjusted performance (Sharpe, beta, alpha, volatility, drawdown), "
-        "and genuinely recent news/macro. Cite specific numbers. Be balanced: real pros AND "
-        "cons. If key data is missing or news isn't recent, lower confidence. Research, not "
-        f"advice.\n\n{facts}"
+        f"Today's date is {today}. You are an equity research analyst. A QUANTITATIVE composite "
+        f"score has already been computed from the live metrics:\n"
+        f"  composite score = {sr.score:.2f} (0 = weak, 1 = strong)\n"
+        f"  factor scores (0-1) = {sr.factors}\n\n"
+        "Your job is to EXPLAIN this score and write balanced pros/cons grounded in the facts "
+        "below — NOT to invent your own rating. Set `score` to the composite, which you may "
+        f"adjust by AT MOST ±{_NUDGE_BAND:.2f} (i.e. within [{lo}, {hi}]) ONLY if genuinely "
+        "recent, material news justifies it; otherwise echo the composite exactly. Do not "
+        "output a score outside that band. (`lean`/`confidence` you return are ignored — the "
+        "system derives them from the score.)\n"
+        "RECENCY RULES: fundamentals/metrics are live as of today; treat RECENT NEWS as current "
+        "only if dated within the last ~1-2 months — ignore prior-year events and never call "
+        "them recent; do not use training-data recollections; if news conflicts with the live "
+        "fundamentals, prefer the fundamentals and note it. Cite specific numbers.\n\n"
+        f"{facts}"
     )
     return reason(prompt, AnalystVerdict, temperature=0.3)
 
@@ -111,15 +113,14 @@ def _reflect(facts: str, verdict: AnalystVerdict) -> AnalystVerdict:
     today = date.today().isoformat()
     prompt = (
         f"Today's date is {today}. You are a skeptical reviewer checking another analyst's "
-        "verdict for rigor. Verify every claim is supported by the facts. Flag and REMOVE:\n"
+        "pros/cons/reasoning for rigor (the numeric score is set elsewhere — keep `score` as "
+        "given). Flag and REMOVE:\n"
         "- any claim citing a specific past fiscal quarter, dated event, or figure that is "
-        "NOT present in the live fundamentals or in news dated within the last ~1-2 months "
-        "(these are stale model recollections or mis-dated search hits);\n"
+        "NOT present in the live fundamentals or in news dated within the last ~1-2 months;\n"
         "- any prior-year event described as 'recent';\n"
-        "- numbers contradicted by the live data, pros/cons not grounded in the facts, "
-        "lean/score inconsistent with the evidence, or overconfidence given data warnings.\n"
-        "Return a corrected verdict (revised). If already sound, set needs_revision=false and "
-        "echo it in revised.\n\n"
+        "- numbers contradicted by the live data or pros/cons not grounded in the facts.\n"
+        "Return a corrected verdict (revised), preserving its `score`. If already sound, set "
+        "needs_revision=false and echo it in revised.\n\n"
         f"FACTS:\n{facts}\n\nVERDICT UNDER REVIEW:\n{verdict.model_dump_json()}\n"
     )
     critique = reason(prompt, CritiqueResult, temperature=0.1)
@@ -129,23 +130,32 @@ def _reflect(facts: str, verdict: AnalystVerdict) -> AnalystVerdict:
 def analyze_from_snapshot(
     snap: TickerSnapshot, macro_signals: list[MacroSignal], *, reflect: bool = True,
 ) -> TickerAnalysis:
-    """The reasoning step, given an already-built snapshot. Separated so the orchestrator can
-    persist the snapshot and the explainer can reuse it."""
+    """The reasoning step, given an already-built snapshot. The score/lean/confidence come from
+    the deterministic factor model; the LLM explains it and may nudge the score within a band."""
+    sr = composite_score(snap.fundamentals, snap.metrics)
     facts = _facts_block(snap, macro_signals)
-    verdict = _analyze(facts)
+    verdict = _analyze(facts, sr)
     if reflect:
         verdict = _reflect(facts, verdict)
+
+    if sr.factors:  # have quant data: clamp the LLM's score into the allowed band
+        lo, hi = sr.score - _NUDGE_BAND, sr.score + _NUDGE_BAND
+        final_score = max(0.0, min(1.0, max(lo, min(hi, verdict.score))))
+    else:           # no quant data at all: stay neutral, low confidence
+        final_score = 0.5
+
     return TickerAnalysis(
         ticker=snap.ticker,
         name=snap.fundamentals.name,
         sector=snap.fundamentals.sector,
-        lean=verdict.lean,
-        confidence=verdict.confidence,
-        score=verdict.score,
+        lean=lean_from_score(final_score),
+        confidence=sr.confidence,
+        score=round(final_score, 4),
         pros=verdict.pros,
         cons=verdict.cons,
         reasoning=verdict.reasoning,
         metrics=snap.metrics,
+        factors=sr.factors,
         sources=snap.news,
         data_warnings=snap.data_warnings,
     )

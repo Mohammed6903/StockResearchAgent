@@ -133,6 +133,7 @@ class TickerAnalysis(BaseModel):
     cons: list[str] = Field(default_factory=list)
     reasoning: str = ""
     metrics: QuantMetrics = Field(default_factory=QuantMetrics)
+    factors: dict[str, float] = Field(default_factory=dict)  # value/quality/momentum/growth 0..1
     sources: list[NewsItem] = Field(default_factory=list)
     data_warnings: list[str] = Field(default_factory=list)
 

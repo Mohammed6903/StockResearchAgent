@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ..models import Action, Lean
+from ..models import Lean
 
 
 class MacroSignalDraft(BaseModel):
@@ -49,20 +49,6 @@ class CritiqueResult(BaseModel):
     needs_revision: bool = False
     issues: list[str] = Field(default_factory=list)
     revised: AnalystVerdict
-
-
-class AdviceVerdict(BaseModel):
-    """The LLM's actionable call. It chooses direction + a target position size; Python turns
-    that into concrete shares/amount and enforces caps and holding constraints."""
-
-    action: Action = Action.HOLD
-    target_pct_of_capital: float = Field(
-        0.0, ge=0.0, le=1.0,
-        description="desired position size for this stock as a fraction of total capital, "
-        "BEFORE the system applies the max-position cap",
-    )
-    confidence: float = Field(0.5, ge=0.0, le=1.0)
-    rationale: str = ""
 
 
 class TeachingNote(BaseModel):

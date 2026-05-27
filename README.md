@@ -11,6 +11,19 @@ bullish/neutral/bearish lean. Every run is persisted to SQLite so you build a tr
 
 ---
 
+## Scoring: deterministic, not an LLM guess
+
+The 0–1 attractiveness **score, lean, and confidence are computed in Python** from a
+composite factor model — **value** (P/E, fwd P/E, PEG, P/B, P/S), **quality** (ROE, ROA,
+margins, leverage, liquidity), **momentum/risk** (1y return, Sharpe, alpha, drawdown,
+volatility), and **growth** (revenue/earnings). Each metric maps to 0–1 via an anchored ramp;
+factors average their available metrics; the composite is a weighted blend (`quant/score.py`).
+This is deliberate: asked to rate a stock, an LLM hedges everything to "neutral / ~0.5 / 60%."
+A deterministic score genuinely differentiates stocks and is reproducible. The LLM writes the
+pros/cons/reasoning and may **nudge the score by at most ±0.10** on materially recent news —
+it can't override the quant. `lean` comes from thresholds (≥0.60 bullish, ≤0.40 bearish), and
+**buy/sell/hold + position size are derived from the score**, not from a hedging model.
+
 ## Guiding principle: the LLM interprets, it never calculates
 
 This is the design decision everything else flows from. All quantitative metrics
@@ -341,11 +354,12 @@ stockresearch advise RELIANCE.NS
 stockresearch advise TCS.NS --no-save                  # don't log this one
 ```
 
-The LLM picks the direction and a target position size; the system does the share/amount math
-deterministically and enforces the caps — it won't suggest exceeding `max_position_pct`, can't
-SELL what you don't hold, and abstains (HOLD) if price data is missing. It's portfolio-aware:
-BUY is sized against capital relative to what you already own. Sized suggestions for
-research/tracking — **not financial advice**.
+The action is **derived deterministically from the composite score**: a high score → BUY
+sized by conviction toward `max_position_pct`; a low score → SELL/avoid; the middle → HOLD.
+The system does all share/amount math and enforces the caps — it won't exceed
+`max_position_pct`, can't SELL what you don't hold, and abstains (HOLD) if price/quant data is
+missing. It's portfolio-aware: BUY is sized against capital relative to what you already own.
+Sized suggestions for research/tracking — **not financial advice**.
 
 ### `recommendations` / `winrate` — the call log and its scorecard
 

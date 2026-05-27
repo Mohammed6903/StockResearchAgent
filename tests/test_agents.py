@@ -6,6 +6,7 @@ import pytest
 from stockresearch.agents import orchestrator, ticker_analyst
 from stockresearch.agents.schemas import AnalystVerdict
 from stockresearch.models import Fundamentals, Lean, QuantMetrics
+from stockresearch.quant.score import lean_from_score
 
 
 @pytest.fixture
@@ -26,29 +27,36 @@ def fake_data(monkeypatch):
     )
 
 
-def test_analyze_ticker_merges_facts_not_model(fake_data, monkeypatch):
-    # LLM tries to claim a wrong lean; metrics/identity must come from snapshot.
+def test_metrics_and_identity_come_from_snapshot_not_model(fake_data, monkeypatch):
+    # The LLM provides narrative only; identity/metrics/score come from the deterministic side.
     verdict = AnalystVerdict(lean=Lean.BULLISH, confidence=0.7, score=0.6,
                              pros=["cheap"], cons=["slow"], reasoning="ok")
-    monkeypatch.setattr(ticker_analyst, "_analyze", lambda facts: verdict)
+    monkeypatch.setattr(ticker_analyst, "_analyze", lambda facts, sr: verdict)
 
     res = ticker_analyst.analyze_ticker("AAPL", pd.Series(dtype=float), [], reflect=False)
     assert res.ticker == "AAPL"
     assert res.name == "AAPL Inc"
     assert res.sector == "Technology"
-    assert res.lean == Lean.BULLISH
     assert res.metrics.last_price == 159.0  # computed from fake closes, not the LLM
+    assert res.factors  # deterministic factor breakdown present
+    # lean is derived from the (deterministic) score, not whatever the LLM claimed
+    assert res.lean == lean_from_score(res.score)
 
 
-def test_reflection_can_override_verdict(fake_data, monkeypatch):
-    bad = AnalystVerdict(lean=Lean.BULLISH, confidence=0.9, score=0.9, reasoning="hype")
-    good = AnalystVerdict(lean=Lean.NEUTRAL, confidence=0.4, score=0.4, reasoning="grounded")
-    monkeypatch.setattr(ticker_analyst, "_analyze", lambda f: bad)
-    monkeypatch.setattr(
-        ticker_analyst, "_reflect", lambda f, v: good,
+def test_llm_score_nudge_is_clamped_to_band(fake_data, monkeypatch):
+    from stockresearch.quant.score import composite_score
+
+    # The LLM tries to force the score to 1.0; it must be clamped to composite + 0.10.
+    sr = composite_score(
+        ticker_analyst.get_fundamentals("AAPL"),
+        ticker_analyst.compute_metrics(ticker_analyst.get_closes("AAPL", 365),
+                                       pd.Series(dtype=float), 0.045),
     )
-    res = ticker_analyst.analyze_ticker("MSFT", pd.Series(dtype=float), [], reflect=True)
-    assert res.lean == Lean.NEUTRAL and res.confidence == 0.4
+    greedy = AnalystVerdict(score=1.0, reasoning="moon")
+    monkeypatch.setattr(ticker_analyst, "_analyze", lambda facts, s: greedy)
+
+    res = ticker_analyst.analyze_ticker("AAPL", pd.Series(dtype=float), [], reflect=False)
+    assert abs(res.score - round(min(1.0, sr.score + 0.10), 4)) < 1e-6
 
 
 def test_orchestrator_isolates_bad_ticker(monkeypatch):

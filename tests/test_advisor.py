@@ -1,85 +1,82 @@
-"""Advisor sizing tests (mocked LLM) + win-rate scoring (synthetic prices)."""
+"""Advisor tests: action + sizing are deterministic from the analysis score (no LLM)."""
 
 from datetime import date
 
 import pytest
 
 from stockresearch.agents import advisor
-from stockresearch.agents.schemas import AdviceVerdict
-from stockresearch.models import Action, Lean, QuantMetrics, TickerAnalysis, TickerSnapshot
+from stockresearch.models import Action, QuantMetrics, TickerAnalysis, TickerSnapshot
+from stockresearch.quant.score import lean_from_score
 
 
 def _snap(price):
     return TickerSnapshot(ticker="AAA", metrics=QuantMetrics(last_price=price))
 
 
-def _analysis():
-    return TickerAnalysis(ticker="AAA", lean=Lean.BULLISH, score=0.8, confidence=0.7)
-
-
-def _mock_verdict(monkeypatch, action, target_pct, conf=0.7):
-    monkeypatch.setattr(
-        advisor, "_verdict",
-        lambda *a, **k: AdviceVerdict(action=action, target_pct_of_capital=target_pct,
-                                      confidence=conf, rationale="r"),
+def _analysis(score, factors=True):
+    return TickerAnalysis(
+        ticker="AAA", score=score, lean=lean_from_score(score), confidence=0.7,
+        factors={"value": 0.5, "quality": 0.5} if factors else {},
     )
 
 
-def test_buy_sizes_against_capital(monkeypatch):
-    _mock_verdict(monkeypatch, Action.BUY, 0.10)
-    rec = advisor.advise(_snap(100), _analysis(), capital=100_000,
+def test_strong_score_buys_sized_by_conviction():
+    rec = advisor.advise(_snap(100), _analysis(0.8), capital=100_000,
                          max_position_pct=0.10, held_qty=0)
     assert rec.action == Action.BUY
-    assert rec.shares == 100      # 10% of 100k = 10k / 100 = 100 shares
-    assert rec.amount == 100 * 100
-    assert rec.target_pct == 0.10
+    # frac=(0.8-0.6)/0.4=0.5 -> target 0.10*(0.4+0.3)=0.07 -> 7000/100 = 70 shares
+    assert rec.shares == 70 and rec.amount == 7000
 
 
-def test_target_pct_clamped_to_cap(monkeypatch):
-    _mock_verdict(monkeypatch, Action.BUY, 0.50)  # asks for 50%, cap is 10%
-    rec = advisor.advise(_snap(100), _analysis(), capital=100_000,
+def test_higher_score_buys_more():
+    low = advisor.advise(_snap(100), _analysis(0.62), capital=100_000,
                          max_position_pct=0.10, held_qty=0)
-    assert rec.target_pct == 0.10 and rec.shares == 100
-    assert any("cap" in n for n in rec.notes)
+    high = advisor.advise(_snap(100), _analysis(0.95), capital=100_000,
+                          max_position_pct=0.10, held_qty=0)
+    assert high.shares > low.shares  # conviction scales size
 
 
-def test_buy_when_already_at_target_becomes_hold(monkeypatch):
-    _mock_verdict(monkeypatch, Action.BUY, 0.10)
-    # already hold 100 shares = target -> nothing to buy
-    rec = advisor.advise(_snap(100), _analysis(), capital=100_000,
-                         max_position_pct=0.10, held_qty=100)
+def test_buy_when_already_at_target_holds():
+    rec = advisor.advise(_snap(100), _analysis(0.8), capital=100_000,
+                         max_position_pct=0.10, held_qty=70)
     assert rec.action == Action.HOLD and rec.shares == 0
 
 
-def test_sell_with_no_holding_becomes_hold(monkeypatch):
-    _mock_verdict(monkeypatch, Action.SELL, 0.0)
-    rec = advisor.advise(_snap(100), _analysis(), capital=100_000,
-                         max_position_pct=0.10, held_qty=0)
-    assert rec.action == Action.HOLD
-    assert any("no holding" in n for n in rec.notes)
-
-
-def test_sell_full_exit(monkeypatch):
-    _mock_verdict(monkeypatch, Action.SELL, 0.0)
-    rec = advisor.advise(_snap(100), _analysis(), capital=100_000,
+def test_weak_score_full_exit_when_held():
+    rec = advisor.advise(_snap(100), _analysis(0.2), capital=100_000,
                          max_position_pct=0.10, held_qty=50)
     assert rec.action == Action.SELL and rec.shares == 50
 
 
-def test_no_capital_abstains(monkeypatch):
-    _mock_verdict(monkeypatch, Action.BUY, 0.10)
-    rec = advisor.advise(_snap(100), _analysis(), capital=0,
-                         max_position_pct=0.10, held_qty=0)
-    assert rec.action == Action.HOLD and rec.shares == 0
-    assert any("capital" in n for n in rec.notes)
-
-
-def test_missing_price_abstains(monkeypatch):
-    _mock_verdict(monkeypatch, Action.BUY, 0.10)
-    rec = advisor.advise(_snap(None), _analysis(), capital=100_000,
+def test_weak_score_no_holding_holds_avoid():
+    rec = advisor.advise(_snap(100), _analysis(0.2), capital=100_000,
                          max_position_pct=0.10, held_qty=0)
     assert rec.action == Action.HOLD
-    assert any("price" in n for n in rec.notes)
+    assert any("avoid" in n for n in rec.notes)
+
+
+def test_middling_score_holds():
+    rec = advisor.advise(_snap(100), _analysis(0.50), capital=100_000,
+                         max_position_pct=0.10, held_qty=0)
+    assert rec.action == Action.HOLD
+
+
+def test_no_capital_abstains():
+    rec = advisor.advise(_snap(100), _analysis(0.8), capital=0,
+                         max_position_pct=0.10, held_qty=0)
+    assert rec.action == Action.HOLD and any("capital" in n for n in rec.notes)
+
+
+def test_missing_price_abstains():
+    rec = advisor.advise(_snap(None), _analysis(0.8), capital=100_000,
+                         max_position_pct=0.10, held_qty=0)
+    assert rec.action == Action.HOLD and any("price" in n for n in rec.notes)
+
+
+def test_no_factors_abstains():
+    rec = advisor.advise(_snap(100), _analysis(0.8, factors=False), capital=100_000,
+                         max_position_pct=0.10, held_qty=0)
+    assert rec.action == Action.HOLD and any("quant data" in n for n in rec.notes)
 
 
 @pytest.fixture
@@ -116,4 +113,3 @@ def test_winrate_scoring(env, monkeypatch):
     assert scored == 2 * len(evaluate.HORIZONS)
     w = evaluate.winrate()
     assert w["win_rate"] == 1.0
-    assert w["by_action"]["buy"]["wins"] == w["by_action"]["buy"]["n"]
